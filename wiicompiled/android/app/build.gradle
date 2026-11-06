@@ -4,15 +4,17 @@ plugins {
 
 android {
     namespace 'com.wither.nsmbw'
-    compileSdk 34
+    compileSdk 36
 
     defaultConfig {
-        applicationId 'com.wither.nsmbw'
+        // A separate QA ID allows View instrumentation before the native/game build is staged.
+        applicationId providers.gradleProperty('brawlApplicationId').getOrElse('com.genisson.brawl.android')
         // Guest RAM uses memfd_create, which bionic has from Android 11 (API 30).
-        minSdk 30
-        targetSdk 34
-        versionCode 15
-        versionName '0.1.1'
+        minSdk 31
+        targetSdk 36
+        testInstrumentationRunner 'com.wither.nsmbw.TouchControlsInstrumentation'
+        versionCode 1
+        versionName '0.1.0-dev'
         ndk {
             abiFilters 'arm64-v8a'
         }
@@ -38,8 +40,7 @@ android {
 
     sourceSets {
         main {
-            // libmain.so and the runtime's data files are staged by tools/stage-android.ps1 from
-            // the native build (wiicompiled/android-build); they are not checked in.
+            // tools/stage-android.py stages the native build and runtime assets locally.
             jniLibs.srcDirs = ['../native/jniLibs']
             assets.srcDirs = ['../native/assets']
         }

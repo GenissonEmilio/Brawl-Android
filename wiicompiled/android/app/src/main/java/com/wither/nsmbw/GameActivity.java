@@ -20,14 +20,15 @@ import org.libsdl.app.SDLActivity;
 
 /**
  * The game: SDL's activity running libmain.so (the translated game, its runtime, SDL and Dawn,
- * linked into one library), with the on-screen remote and the phone's motion on top.
+ * linked into one library), with a multitouch GameCube overlay.
  */
 public final class GameActivity extends SDLActivity
-        implements TouchControlsView.Listener, MotionInput.Listener {
-    private static final String TAG = "NSMBW";
+        implements TouchControlsView.Listener {
+    private static final String TAG = "BrawlAndroid";
 
-    /** Player 1's on-screen remote and motion (runtime/src/android/android_bridge.cpp). */
-    static native void nativeSetTouchState(int buttons, boolean shake, float tilt);
+    /** Player 1's GameCube overlay, independent of SDL physical controller enumeration. */
+    static native void nativeSetTouchState(int buttons, float x, float y, float cx, float cy, boolean enabled);
+    static native void nativeCancelTouchState();
 
     /** The Display menu: aspect, render scale (480 lines per 1x), FPS counter (DisplaySettings). */
     static native void nativeApplyDisplaySettings(int aspect, float renderScale, boolean showFps);
@@ -41,10 +42,6 @@ public final class GameActivity extends SDLActivity
     /** Whether this run is a LAN session, and leaving one (the host keeps the session's save). */
     static native boolean nativeSessionActive();
     static native void nativePrepareToLeave();
-    /** A tap on the game's menus, as fractions of the screen. */
-    static native void nativeTap(float x, float y);
-    /** Whether a menu that taps drive is up (the remote is hidden then). */
-    static native boolean nativeTapScreen();
     /** {render scale, show FPS, aspect} after the game's own settings window changed them, else null. */
     static native float[] nativeTakeSettings();
 
@@ -53,11 +50,8 @@ public final class GameActivity extends SDLActivity
     private AppSettings settings;
     private boolean bootWidescreen;  // the game reads 4:3 versus widescreen once, when it starts
     private TouchControlsView touch;
-    private MotionInput motion;
     private boolean nativeReady;
-    private int touchButtons;
-    private boolean touchShake, motionShake;
-    private float motionTilt;
+    private BrawlTouchInput.State touchState = new BrawlTouchInput.State(0,0,0,0,0);
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -81,7 +75,7 @@ public final class GameActivity extends SDLActivity
         // LAN rooms are found with broadcasts, which many Wi-Fi drivers drop unless an app holds this.
         final WifiManager wifi = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
         if (wifi != null) {
-            multicastLock = wifi.createMulticastLock("nsmbw-lan");
+            multicastLock = wifi.createMulticastLock("brawl-lan");
             multicastLock.setReferenceCounted(false);
             multicastLock.acquire();
         }
@@ -92,7 +86,6 @@ public final class GameActivity extends SDLActivity
         applyControlSettings();
         addContentView(touch, new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        motion = new MotionInput(this, this);
     }
 
     /** SDL is linked into libmain.so, so that one library is all there is to load. */
@@ -101,14 +94,11 @@ public final class GameActivity extends SDLActivity
         return new String[] {"main"};
     }
 
-    // The game's menus take taps and the remote hides while they are up; it comes back a moment
-    // after they go, so it doesn't blink while one menu screen hands over to the next.
+    // Preserve native settings changes; GameCube controls remain available in Brawl's menus.
     private final android.os.Handler menuPoll = new android.os.Handler(android.os.Looper.getMainLooper());
-    private long lastTapScreen;
     private final Runnable pollMenu = new Runnable() {
         @Override
         public void run() {
-            final long now = android.os.SystemClock.uptimeMillis();
             if (nativeReady) {
                 // The game's settings window: keep its choices, the config is rewritten at each start.
                 final float[] changed = nativeTakeSettings();
@@ -120,20 +110,11 @@ public final class GameActivity extends SDLActivity
                     if (changed.length > 4) settings.setFrameGraph(changed[4] > 0.5f);
                 }
             }
-            if (nativeReady && nativeTapScreen()) {
-                lastTapScreen = now;
-                touch.setMenuMode(true);
-            } else if (now - lastTapScreen > 600) {
-                touch.setMenuMode(false);
-            }
+            // Brawl menus accept the same GameCube A/B/stick controls as a match.
+            // Never hide them using NSMBW-specific menu detection or synthesize menu taps.
             menuPoll.postDelayed(this, 100);
         }
     };
-
-    @Override
-    public void onTap(float x, float y) {
-        if (nativeReady) nativeTap(x, y);
-    }
 
     @Override
     protected void onResume() {
@@ -141,16 +122,15 @@ public final class GameActivity extends SDLActivity
         menuPoll.removeCallbacks(pollMenu);
         menuPoll.post(pollMenu);
         hideSystemBars();
-        if (motion != null) {
-            motion.start(settings.motionTilt(), settings.motionShake());
-        }
+        pushInput();
     }
 
     @Override
     protected void onPause() {
         menuPoll.removeCallbacks(pollMenu);
-        if (motion != null) motion.stop();
         if (touch != null) touch.release();
+        // Backgrounding clears input, without unplugging Player 1 for a resumed frame.
+        if (nativeReady) nativeSetTouchState(0,0,0,0,0,settings.touchControls());
         super.onPause();
     }
 
@@ -237,23 +217,22 @@ public final class GameActivity extends SDLActivity
     // --- input ---------------------------------------------------------------------------------
 
     @Override
-    public void onTouchInput(int buttons, boolean shake) {
-        touchButtons = buttons;
-        touchShake = shake;
+    public void onTouchInput(BrawlTouchInput.State state) {
+        touchState = state;
         pushInput();
     }
 
     @Override
-    public void onMotion(float tilt, boolean shake) {
-        motionTilt = tilt;
-        motionShake = shake;
-        pushInput();
+    public void onTouchCancel() {
+        touchState = new BrawlTouchInput.State(0,0,0,0,0);
+        if (nativeReady) nativeCancelTouchState();
     }
 
     private void pushInput() {
         if (!nativeReady) return;
         try {
-            nativeSetTouchState(touchButtons, touchShake || motionShake, motionTilt);
+            nativeSetTouchState(touchState.buttons,touchState.x,touchState.y,touchState.cx,touchState.cy,
+                    settings.touchControls());
         } catch (UnsatisfiedLinkError e) {
             nativeReady = false;
             Log.e(TAG, "touch input bridge missing from libmain.so", e);
@@ -279,8 +258,8 @@ public final class GameActivity extends SDLActivity
 
     /**
      * The phone's Back gesture: back to the start menu (where the settings are), leave a LAN game,
-     * or quit. There is no on-screen menu button; the game's own settings window (the gear on the
-     * save file screen and the pause menus) covers resolution and the FPS counter while playing.
+     * or quit. The overlay menu button opens the same menu. Display options are available
+     * in the launcher's Settings screen.
      */
     @Override
     public void onMenu() {
@@ -291,7 +270,7 @@ public final class GameActivity extends SDLActivity
         if (inSession) items.add("Leave LAN Game");
         items.add("Quit Game");
         new AlertDialog.Builder(this)
-                .setTitle("New Super Mario Bros. Wii")
+                .setTitle("Super Smash Bros. Brawl")
                 .setItems(items.toArray(new String[0]), (dialog, which) -> {
                     final String item = items.get(which);
                     if (item.equals("Start Menu")) openStartMenu(inSession);

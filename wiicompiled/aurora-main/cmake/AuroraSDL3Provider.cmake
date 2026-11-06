@@ -146,8 +146,14 @@ elseif (_aurora_sdl3_provider STREQUAL "vendor")
     if (DEFINED FETCHCONTENT_SOURCE_DIR_SDL AND EXISTS "${FETCHCONTENT_SOURCE_DIR_SDL}")
       aurora_sdl3_apply_patches("${FETCHCONTENT_SOURCE_DIR_SDL}")
     endif ()
+    set(_aurora_sdl3_hash_argument "")
+    if (AURORA_SDL3_VERSION STREQUAL "3.4.4")
+      set(_aurora_sdl3_hash_argument URL_HASH
+        "SHA256=ee712dbe6a89bb140bbfc2ce72358fb5ee5cc2240abeabd54855012db30b3864")
+    endif ()
     FetchContent_Declare(SDL
       URL "https://github.com/libsdl-org/SDL/releases/download/release-${AURORA_SDL3_VERSION}/SDL3-${AURORA_SDL3_VERSION}.tar.gz"
+      ${_aurora_sdl3_hash_argument}
       DOWNLOAD_EXTRACT_TIMESTAMP FALSE
       PATCH_COMMAND "${CMAKE_COMMAND}" -DSDL_SOURCE_DIR=<SOURCE_DIR> -P "${_aurora_sdl3_patches}"
       EXCLUDE_FROM_ALL

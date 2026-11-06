@@ -23,7 +23,7 @@ import java.util.Locale;
  * finds them through WIICOMPILED_RUNTIME_DIR.</li>
  * <li>User data (Config.toml, NAND with the saves, caches, logs) and the player's game data
  * (game/files, game/sys) live in the app's external files directory,
- * Android/data/com.wither.nsmbw/files, which a PC can reach over USB; WIICOMPILED_DATA_DIR.</li>
+ * Android/data/com.genisson.brawl.android/files; WIICOMPILED_DATA_DIR.</li>
  * </ul>
  */
 final class AppFiles {
@@ -40,6 +40,18 @@ final class AppFiles {
     static File gameDir(Context context) { return new File(dataDir(context), "game"); }
 
     static File runtimeDir(Context context) { return new File(context.getFilesDir(), "runtime"); }
+
+    static GameInstallTransaction gameInstall(Context context) throws IOException {
+        return new GameInstallTransaction(dataDir(context));
+    }
+
+    /** Import/recovery worker only; normal gameReady/launcher refresh never hashes the executable. */
+    static void validateImportedGame(File root) throws IOException {
+        final String problem=gameProblem(root);
+        if(problem!=null) throw new IOException(problem);
+        GameInstallTransaction.verifySha256(new File(root,"sys/main.dol"),
+                "179574a14c484279efef84db58e55fe31bc2e3cf6c99efc0d20e7b322ec088be");
+    }
 
     /** An extracted disc: sys/main.dol and the files/ tree. */
     static boolean isGameRoot(File dir) {
@@ -77,12 +89,12 @@ final class AppFiles {
     static String headerProblem(byte[] header) {
         final String id = new String(header, 0, 6, StandardCharsets.US_ASCII);
         final int revision = header[7] & 0xFF;
-        if (!id.equals("SMNE01")) {
-            return "That is " + id.trim() + ", not New Super Mario Bros. Wii for the USA (SMNE01). "
+        if (!id.equals("RSBE01")) {
+            return "That is " + id.trim() + ", not Super Smash Bros. Brawl for the USA (RSBE01). "
                     + "This port runs only the USA disc, revision 1.";
         }
         if (revision != 1) {
-            return "That is New Super Mario Bros. Wii revision " + revision + ". This port runs only "
+            return "That is Super Smash Bros. Brawl revision " + revision + ". This port runs only "
                     + "revision 1 (Dolphin shows it under Properties > Info).";
         }
         return null;
@@ -129,11 +141,11 @@ final class AppFiles {
                 + "gpu_compat = " + settings.gpuCompat() + "\n"
                 + "resolution_multiplier = " + String.format(Locale.ROOT, "%.2f", settings.resolutionScale()) + "\n"
                 + "frame_interpolation_fps = 0\n"
+                + "vsync = " + settings.vsync() + "\n"
                 + "graphics_api = \"auto\"\n"
                 + "skip_unready_pipelines = true\n"
                 + "disable_copy_filter = true\n"
                 + "show_fps = " + settings.showFps() + "\n"
-                + "spinning_coins = " + settings.spinningCoins() + "\n"
                 + "frame_graph = " + settings.frameGraph() + "\n"
                 + "texture_replacements = false\n"
                 + "texture_dumps = false\n"
@@ -170,7 +182,7 @@ final class AppFiles {
                 if (keep) kept.append(line).append('\n');
             }
         } catch (IOException e) {
-            android.util.Log.w("NSMBW", "could not read the old Config.toml", e);
+            android.util.Log.w("BrawlAndroid", "could not read the old Config.toml", e);
         }
         return kept.toString();
     }

@@ -11,6 +11,7 @@
 #include "host_context.h"
 #include "memory.h"
 #include "runtime_log.h"
+#include "save_state_jump.h"
 
 #if __has_include(<zstd.h>)
 #include <zstd.h>
@@ -49,7 +50,7 @@ constexpr size_t kBelow = 512;        // bytes kept below a thread's resume poin
 
 // Where each fiber resumes: written by SwitchFiber, read back when the fiber runs again.
 struct FiberSlot {
-    void* jmp[5] = {};
+    Jump::Context jump;
     char* top = nullptr;
 };
 std::unordered_map<void*, FiberSlot> g_fibers;  // only touched on the game's host thread
@@ -132,11 +133,11 @@ void TakeSnapshot(Snapshot& s) {
     }
     s.stacks.clear();
     for (const auto& [fiber, slot] : g_fibers) {
-        if (slot.top == nullptr || slot.jmp[2] == nullptr) continue;  // never ran, or never switched out
+        if (slot.top == nullptr || !Jump::Ready(slot.jump)) continue;  // never ran, or never switched out
         StackCopy copy;
         copy.fiber = fiber;
         copy.slot = slot;
-        copy.from = static_cast<char*>(slot.jmp[2]) - kBelow;  // __builtin_setjmp keeps the stack pointer in [2]
+        copy.from = Jump::StackPointer(slot.jump) - kBelow;
         copy.bytes.assign(copy.from, slot.top);
         s.stacks.push_back(std::move(copy));
     }
@@ -189,7 +190,7 @@ std::string LoadProblem(const Snapshot& s) {
     if (!s.valid) return "That slot is empty.";
     uint32_t current = 0;
     const auto threads = Fiber::GuestFiberManager::CopyFibers(current);
-    const size_t live = std::count_if(g_fibers.begin(), g_fibers.end(), [](const auto& f) { return f.second.top && f.second.jmp[2]; });
+    const size_t live = std::count_if(g_fibers.begin(), g_fibers.end(), [](const auto& f) { return f.second.top && Jump::Ready(f.second.jump); });
     bool same = threads.size() == s.threads.size() && s.stacks.size() == live;
     for (const auto& [thread, fiber] : threads) {
         const auto it = std::find_if(s.threads.begin(), s.threads.end(), [&](const auto& t) { return t.first == thread; });
@@ -202,13 +203,13 @@ std::string LoadProblem(const Snapshot& s) {
     return same ? "" : "This state is from another match or level. Load it from where you saved it.";
 }
 
-[[gnu::noinline]] void ResumeSaved(void* fiber) {
+[[noreturn, gnu::noinline]] void ResumeSaved(void* fiber) {
     FiberSlot& slot = g_fibers[fiber];
-    if (slot.jmp[1] == nullptr) {
+    if (!Jump::Ready(slot.jump)) {
         RT_LOGF(RT_TAG_RUNTIME, "[savestate] fiber %p resumed with no saved point (%zu fibers)\n", fiber, g_fibers.size());
         std::abort();
     }
-    __builtin_longjmp(slot.jmp, 1);
+    Jump::Resume(slot.jump);
 }
 
 } // namespace
@@ -236,25 +237,34 @@ void ForgetFiber(void* fiber) { g_fibers.erase(fiber); }
 
 void MarkStackTop(void* top) { g_fibers[HostContext::Current()].top = static_cast<char*>(top); }
 
-// The resume point goes into the fiber's slot, its registers onto its own stack (the compiler spills every callee-saved
-// register around __builtin_setjmp). kPad keeps this switch's own frames below where a load writes the saved stack, as
+// The resume point goes into the fiber's slot. x86's builtin spills its callee-saved registers onto its own stack;
+// ARM64's native jump buffer stores them in the slot. kPad keeps this switch's own frames below where a load writes the saved stack, as
 // long as the thread is no more than kPad shallower than when it was saved; after the switch nothing in this frame is
 // read again: ResumeSaved jumps through the slot, which a load has replaced.
-[[gnu::noinline]] void SwitchBelow(void* target) {
+// A load can overwrite this frame's high bookkeeping slots. In particular an
+// NDK stack-canary reload after Switch would inspect restored guest stack
+// bytes rather than this invocation's original frame. Resume discards the
+// frame through the checkpoint; it must perform no such reload.
+[[noreturn, gnu::noinline, gnu::no_stack_protector]] void SwitchBelow(void* target) {
     volatile char pad[kPad];  // a fixed frame: a dynamic alloca would need a base pointer longjmp doesn't restore
     pad[0] = 0;
+    // A single volatile byte otherwise lets Clang shrink this array to one
+    // byte. Expose the complete object to assembly so all 64 KiB stay reserved.
+    asm volatile("" : : "m"(pad) : "memory");
     HostContext::Switch(target);
+    asm volatile("" : : "m"(pad) : "memory");
     ResumeSaved(HostContext::Current());
 }
 
 [[gnu::noinline]] void SwitchFiber(void* target) {
-    void** jmp = g_fibers[HostContext::Current()].jmp;
-    if (__builtin_setjmp(jmp) == 0) {
+    Jump::Context& jump = g_fibers[HostContext::Current()].jump;
+    Jump::Prepare(jump);
+    if (MKW_SAVE_STATE_CHECKPOINT(jump) == 0) {
 #if defined(__x86_64__) && defined(_WIN32)
         // Win64: the frame address __builtin_setjmp keeps is rbp minus the SEH frame offset, but the resume path reloads
         // xmm6-15 relative to rbp, so it read them from below this frame and every resumed thread lost them (the
         // x86-64-v2 build kept guest r14-r29 there across native OS calls). Resume with the real rbp.
-        asm volatile("movq %%rbp, %0" : "=m"(jmp[0]));
+        asm volatile("movq %%rbp, %0" : "=m"(jump.buffer[0]));
 #endif
         SwitchBelow(target);
     }

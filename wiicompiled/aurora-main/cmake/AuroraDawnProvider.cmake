@@ -42,11 +42,14 @@ endfunction()
 # ── Auto: resolve provider based on platform availability ──
 set(_aurora_dawn_provider "${AURORA_DAWN_PROVIDER}")
 if (_aurora_dawn_provider STREQUAL "auto")
-  # Prebuilt Dawn packages available for: windows-{amd64,arm64}, linux-{x86_64,aarch64}, darwin-{arm64,x86_64}
+  # Prebuilt Dawn packages available for: windows-{amd64,arm64}, linux-{x86_64,aarch64},
+  # darwin-{arm64,x86_64}, android-aarch64.
   set(_has_package FALSE)
   if (WIN32 AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64|x86_64|ARM64|aarch64)$")
     set(_has_package TRUE)
   elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|aarch64)$")
+    set(_has_package TRUE)
+  elseif (ANDROID AND CMAKE_ANDROID_ARCH_ABI STREQUAL "arm64-v8a")
     set(_has_package TRUE)
   elseif (APPLE AND (CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|x86_64)$" OR CMAKE_OSX_ARCHITECTURES MATCHES "^(arm64|x86_64)$"))
     set(_has_package TRUE)
@@ -245,6 +248,23 @@ elseif (_aurora_dawn_provider STREQUAL "package")
       "Dawn package does not contain DawnConfig.cmake.\n"
       "Searched: ${_dawn_pkg_dir}/{lib,lib64,cmake}/cmake/Dawn/\n"
       "The package must be a Dawn install tree built with DAWN_ENABLE_INSTALL=ON.")
+  endif ()
+
+  if (ANDROID)
+    # The pinned Android install export contains its build machine's absolute
+    # NDK liblog.so path. Resolve the system library with the consuming NDK
+    # instead; keep the verified archive itself unchanged.
+    get_target_property(_dawn_android_links dawn::webgpu_dawn INTERFACE_LINK_LIBRARIES)
+    set(_dawn_android_portable_links "")
+    foreach (_link IN LISTS _dawn_android_links)
+      if (IS_ABSOLUTE "${_link}" AND _link MATCHES "/liblog\\.so$")
+        list(APPEND _dawn_android_portable_links log)
+      else ()
+        list(APPEND _dawn_android_portable_links "${_link}")
+      endif ()
+    endforeach ()
+    set_property(TARGET dawn::webgpu_dawn PROPERTY
+      INTERFACE_LINK_LIBRARIES "${_dawn_android_portable_links}")
   endif ()
 
   _aurora_dawn_set_platform_backends()

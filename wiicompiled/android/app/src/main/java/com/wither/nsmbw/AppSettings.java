@@ -26,7 +26,7 @@ final class AppSettings {
         prefs = context.getSharedPreferences(FILE, Context.MODE_PRIVATE);
     }
 
-    int aspectMode() { return prefs.getInt("aspect_mode", ASPECT_FILL); }
+    int aspectMode() { return prefs.getInt("aspect_mode", ASPECT_16_9); }
     void setAspectMode(int mode) { prefs.edit().putInt("aspect_mode", mode).commit(); }
 
     float resolutionScale() { return prefs.getFloat("resolution_scale", 1f); }
@@ -37,6 +37,8 @@ final class AppSettings {
 
     boolean showFps() { return prefs.getBoolean("show_fps", false); }
     void setShowFps(boolean show) { prefs.edit().putBoolean("show_fps", show).commit(); }
+    boolean vsync() { return prefs.getBoolean("vsync", true); }
+    void setVsync(boolean enabled) { prefs.edit().putBoolean("vsync", enabled).commit(); }
     boolean spinningCoins() { return prefs.getBoolean("spinning_coins", true); }
     void setSpinningCoins(boolean on) { prefs.edit().putBoolean("spinning_coins", on).commit(); }
 
@@ -46,13 +48,13 @@ final class AppSettings {
     boolean touchControls() { return prefs.getBoolean("touch_controls", true); }
     void setTouchControls(boolean on) { prefs.edit().putBoolean("touch_controls", on).commit(); }
 
-    float touchOpacity() { return prefs.getFloat("touch_opacity", 0.6f); }
+    float touchOpacity() { return prefs.getFloat("touch_opacity", 0.45f); }
     void setTouchOpacity(float opacity) { prefs.edit().putFloat("touch_opacity", opacity).commit(); }
 
-    boolean motionTilt() { return prefs.getBoolean("motion_tilt", true); }
+    boolean motionTilt() { return prefs.getBoolean("motion_tilt", false); }
     void setMotionTilt(boolean on) { prefs.edit().putBoolean("motion_tilt", on).commit(); }
 
-    boolean motionShake() { return prefs.getBoolean("motion_shake", true); }
+    boolean motionShake() { return prefs.getBoolean("motion_shake", false); }
     void setMotionShake(boolean on) { prefs.edit().putBoolean("motion_shake", on).commit(); }
 
     boolean haptics() { return prefs.getBoolean("haptics", true); }

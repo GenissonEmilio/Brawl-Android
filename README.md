@@ -1,3 +1,13 @@
+# Brawl Android — experimental
+
+Adaptação Android ARM64 do BrawlRecompiled, com controles GameCube multitoque,
+analógicos independentes e runtime nativo sobre Vulkan/SDL3. Consulte o
+[guia Android](docs/ANDROID_PORT.md) e a [validação desta versão](docs/ANDROID_VALIDATION_0.1.0.md).
+Requer os dados da própria cópia USA RSBE01, revisão 1. Histórico, créditos e
+licenças originais preservados; projeto independente e em desenvolvimento.
+
+A documentação original do port para PC segue abaixo.
+
 # Brawl Recompiled
 
 A native PC port of **Super Smash Bros. Brawl** (Wii, 2008), made by statically recompiling the game's PowerPC code

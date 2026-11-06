@@ -20,6 +20,13 @@
 #include <SDL3/SDL_keyboard.h>
 #include <dolphin/pad.h>
 
+#if defined(__ANDROID__)
+// Android touch is a GameCube source, independent of the Wii Remote path.
+extern "C" bool BrawlAndroidReadTouchPad(unsigned port, unsigned short* buttons,
+    signed char* stickX, signed char* stickY, signed char* substickX, signed char* substickY,
+    unsigned char* triggerL, unsigned char* triggerR);
+#endif
+
 namespace {
 
 std::atomic<bool> g_rumbleEnabled{true};
@@ -175,6 +182,32 @@ static uint32_t ReadLocalPads(PADStatus* statuses)
 
     FillTriggersHeldByButtons(statuses);
     InputBindings::Apply(statuses);
+#if defined(__ANDROID__)
+    for (unsigned port = 0; port < PAD_CHANMAX; ++port) {
+        unsigned short buttons = 0;
+        signed char sx = 0, sy = 0, cx = 0, cy = 0;
+        unsigned char left = 0, right = 0;
+        if (!BrawlAndroidReadTouchPad(port, &buttons, &sx, &sy, &cx, &cy, &left, &right)) continue;
+        PADStatus& status = statuses[port];
+        if (status.err != PAD_ERR_NONE) status = {};
+        // Keep the virtual controller connected while a host menu blocks input.
+        status.err = PAD_ERR_NONE;
+        rumbleMask |= 0x80000000u >> port;
+        if (InputBindings::InputBlocked()) continue;
+        status.button |= buttons;
+        // Choose complete vectors, avoiding a diagonal assembled from two devices.
+        if (int(sx) * sx + int(sy) * sy > int(status.stickX) * status.stickX + int(status.stickY) * status.stickY) {
+            status.stickX = sx;
+            status.stickY = sy;
+        }
+        if (int(cx) * cx + int(cy) * cy > int(status.substickX) * status.substickX + int(status.substickY) * status.substickY) {
+            status.substickX = cx;
+            status.substickY = cy;
+        }
+        status.triggerLeft = std::max(status.triggerLeft, left);
+        status.triggerRight = std::max(status.triggerRight, right);
+    }
+#endif
     // Test scripts last, and alone: a key or mouse button pressed at the PC during a scripted run must not reach
     // the game (the keyboard pad maps the mouse buttons to A and B).
     // A script's channel field drives that port (a second player's picks in a scripted match).

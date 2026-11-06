@@ -1,11 +1,12 @@
-// android_bridge.cpp - JNI entry points the Android app (com.wither.nsmbw) calls into libmain.so.
+// JNI entry points for Brawl Android (install ID com.genisson.brawl.android).
+// Preserve the upstream Java/JNI namespace to avoid breaking SDL/native startup.
 #if defined(__ANDROID__)
 
 #include "display_settings.h"
 #include "graphics_info.h"
 #include "runtime_config.h"
 #include "settings_overlay.h"
-#include "virtual_remote.h"
+#include "android_touch_state.h"
 
 #include "netplay/net_socket.h"
 #include "netplay_session.h"
@@ -16,11 +17,22 @@
 #include <jni.h>
 
 #include <chrono>
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
+#include <mutex>
 #include <string>
 #include <thread>
 
 namespace AndroidBridge {
+
+namespace {
+std::mutex touchMutex;
+BrawlAndroid::TouchPadState touchState;
+int8_t Axis(float value) {
+    return std::isfinite(value) ? static_cast<int8_t>(std::lround(std::clamp(value, -1.0f, 1.0f) * 100.0f)) : 0;
+}
+}
 
 // Network play: ask the activity to start the game again in a fresh process (GameActivity
 // .restartForSession), then park this thread until Android ends the process.
@@ -47,12 +59,53 @@ bool RestartGame() {
 
 extern "C" {
 
-// GameActivity.nativeSetTouchState: the on-screen remote (VirtualRemote::TouchButton bits) and the
-// phone's motion (shake, tilt -1..1) for player 1. Called from the UI thread on every change.
-JNIEXPORT void JNICALL Java_com_wither_nsmbw_GameActivity_nativeSetTouchState(
-    JNIEnv*, jclass, jint buttons, jboolean shake, jfloat tilt)
+// Read by PADRead's local-source path, never by SDL's physical device enumeration.
+// Positive Y is up. The phone is exclusively virtual player 1; physical pads keep their ports.
+bool BrawlAndroidReadTouchPad(unsigned port, unsigned short* buttons, signed char* stickX,
+    signed char* stickY, signed char* substickX, signed char* substickY,
+    unsigned char* triggerL, unsigned char* triggerR)
 {
-    VirtualRemote::SetTouchState(static_cast<uint32_t>(buttons), shake == JNI_TRUE, tilt);
+    std::lock_guard<std::mutex> lock(AndroidBridge::touchMutex);
+    BrawlAndroid::TouchPadSample sample;
+    if (!AndroidBridge::touchState.Sample(port, sample)) return false;
+    *buttons = sample.buttons;
+    *stickX = sample.axes[0]; *stickY = sample.axes[1];
+    *substickX = sample.axes[2]; *substickY = sample.axes[3];
+    *triggerL = (*buttons & 0x40u) ? 255 : 0;
+    *triggerR = (*buttons & 0x20u) ? 255 : 0;
+    return true;
+}
+
+// Title input has its own edge latch so background PAD polls cannot consume
+// it. The caller supplies the shader/credits-ready gate before acknowledging.
+bool BrawlAndroidConsumeStartupPress(bool titleReady)
+{
+    std::lock_guard<std::mutex> lock(AndroidBridge::touchMutex);
+    return AndroidBridge::touchState.ConsumeStartupPress(titleReady);
+}
+
+// Actual GameCube buttons and two continuous analog sticks for player 1.
+// Ordinary button UP retains an unsampled press for one poll; axes are always the latest state.
+JNIEXPORT void JNICALL Java_com_wither_nsmbw_GameActivity_nativeSetTouchState(
+    JNIEnv*, jclass, jint buttons, jfloat x, jfloat y, jfloat cx, jfloat cy, jboolean enabled)
+{
+    std::lock_guard<std::mutex> lock(AndroidBridge::touchMutex);
+    AndroidBridge::touchState.Set(static_cast<uint16_t>(buttons & 0x1f70),
+        {AndroidBridge::Axis(x), AndroidBridge::Axis(y), AndroidBridge::Axis(cx), AndroidBridge::Axis(cy)},
+        enabled == JNI_TRUE);
+}
+
+// Gesture cancellation, focus/size changes, pause and hiding the overlay discard pending edges.
+// PAD's input-blocked path can call the same clear without changing the virtual connection.
+void BrawlAndroidCancelTouchPad()
+{
+    std::lock_guard<std::mutex> lock(AndroidBridge::touchMutex);
+    AndroidBridge::touchState.Cancel();
+}
+
+JNIEXPORT void JNICALL Java_com_wither_nsmbw_GameActivity_nativeCancelTouchState(JNIEnv*, jclass)
+{
+    BrawlAndroidCancelTouchPad();
 }
 
 // GameActivity.nativeApplyDisplaySettings: the Display menu. The aspect (0 original 4:3, 1 16:9,

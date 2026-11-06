@@ -50,10 +50,10 @@ public final class LauncherActivity extends Activity {
     /** Set by the game's "Start Menu": show this screen even with Skip Start Menu on. */
     static final String EXTRA_SHOW_START_MENU = "showStartMenu";
 
-    static final String PROJECT_URL = "https://github.com/WitherBlitz/NSMB-Wii-Multiplayer-Recompilation";
+    static final String PROJECT_URL = "https://github.com/josiahg2502-glitch/BrawlRecompiled";
 
     private static final String DOLPHIN_STEPS =
-            "Use your own USA New Super Mario Bros. Wii (SMNE01, revision 1). Easiest: in Dolphin on a "
+            "Use your own USA Super Smash Bros. Brawl (RSBE01, revision 1). Easiest: in Dolphin on a "
             + "computer, right-click the game, choose Properties, Filesystem, then right-click the disc and "
             + "choose Extract Entire Disc. Copy that folder (or a zip of it) to this phone and tap Import. "
             + "Dolphin shows the revision under Properties > Info.";
@@ -63,7 +63,11 @@ public final class LauncherActivity extends Activity {
 
     private TextView status;
     private Button play;
+    private Button importFolder,importZip;
     private View steps;
+    private boolean recoveringImport;
+    private String recoveryProblem;
+    private boolean skipAfterRecovery;
     private final Handler main = new Handler(Looper.getMainLooper());
 
     @Override
@@ -75,7 +79,9 @@ public final class LauncherActivity extends Activity {
         final Intent launch = getIntent();
         final boolean asked = launch != null && (launch.getBooleanExtra(EXTRA_SHOW_START_MENU, false)
                 || launch.getBooleanExtra(EXTRA_RESTART_GAME, false));
-        if (savedInstanceState == null && !asked && settings.skipStartMenu() && AppFiles.gameReady(this)) {
+        recoveringImport=new File(AppFiles.dataDir(this),"game.backup").exists();
+        skipAfterRecovery=savedInstanceState==null&&!asked&&settings.skipStartMenu();
+        if (!recoveringImport && skipAfterRecovery && AppFiles.gameReady(this)) {
             startActivity(new Intent(this, GameActivity.class));
             overridePendingTransition(0, 0);
             finish();
@@ -90,14 +96,14 @@ public final class LauncherActivity extends Activity {
         final LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        final TextView title = text("NSMBW", 34);
+        final TextView title = text("Brawl Android", 34);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         title.setGravity(Gravity.START);
         header.addView(title, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         header.addView(link("Help", v -> showHelp()));
         column.addView(header, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT));
-        final TextView subtitle = text("New Super Mario Bros. Wii, recompiled to run natively", 15);
+        final TextView subtitle = text("Super Smash Bros. Brawl, local native port · development build", 15);
         subtitle.setGravity(Gravity.START);
         column.addView(subtitle, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT));
@@ -129,7 +135,7 @@ public final class LauncherActivity extends Activity {
 
         final Button devices = button("Tailscale & LAN Devices");
         devices.setOnClickListener(v -> DevicesDialog.show(this));
-        column.addView(devices);
+        // LAN frontend is not exposed until validated with Brawl.
 
         // How to get the game files, the same steps KartPad gives, until a game is imported.
         final LinearLayout stepsBox = new LinearLayout(this);
@@ -140,11 +146,11 @@ public final class LauncherActivity extends Activity {
         stepsTitle.setGravity(Gravity.START);
         stepsBox.addView(stepsTitle);
         final TextView stepsText = text(
-                "1. In Dolphin on a computer, right-click New Super Mario Bros. Wii and choose Properties.\n"
+                "1. In Dolphin on a computer, right-click Super Smash Bros. Brawl and choose Properties.\n"
                 + "2. Open Filesystem, right-click the disc at the top and choose Extract Entire Disc.\n"
                 + "3. Copy that folder (or a zip of it) to this phone.\n"
                 + "4. Tap Import from Extracted Game Data Folder… or Import Game Data Zip… below and choose it.\n\n"
-                + "Use the USA disc, revision 1 (SMNE01): Dolphin shows the revision under Properties > Info.", 15);
+                + "Use the USA disc, revision 1 (RSBE01): Dolphin shows the revision under Properties > Info.", 15);
         stepsText.setGravity(Gravity.START);
         stepsText.setPadding(0, dp(6), 0, 0);
         stepsText.setLineSpacing(dp(3), 1f);
@@ -153,40 +159,71 @@ public final class LauncherActivity extends Activity {
         column.addView(stepsBox, new LinearLayout.LayoutParams(Math.min(dp(560),
                 getResources().getDisplayMetrics().widthPixels - 2 * pad), LinearLayout.LayoutParams.WRAP_CONTENT));
 
-        final TextView importHelp = text("Import your own New Super Mario Bros. Wii (USA, SMNE01) once. "
+        final TextView importHelp = text("Import your own Super Smash Bros. Brawl (USA, RSBE01) once. "
                 + "Easiest: the folder Dolphin's Extract Entire Disc makes (DATA, or the folder that holds it), "
                 + "or a zip of that folder. Your saves are kept.", 13);
         importHelp.setTextColor(Color.rgb(170, 178, 186));
         importHelp.setPadding(0, dp(24), 0, 0);
         column.addView(importHelp);
 
-        final Button importFolder = button("Import from Extracted Game Data Folder…");
+        importFolder = button("Import from Extracted Game Data Folder…");
         importFolder.setOnClickListener(v -> startActivityForResult(
                 new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), REQUEST_IMPORT));
         column.addView(importFolder);
-        final Button importZip = button("Import Game Data Zip…");
+        importZip = button("Import Game Data Zip…");
         importZip.setOnClickListener(v -> pickZip());
         column.addView(importZip);
 
-        final TextView version = text("NSMBW " + versionText(), 13);
+        final TextView version = text("Brawl Android " + versionText(), 13);
         version.setTextColor(Color.rgb(120, 128, 136));
         version.setPadding(0, dp(24), 0, 0);
         column.addView(version);
 
         final ScrollView scroll = new ScrollView(this);
+        scroll.setOnApplyWindowInsetsListener((view, insets) -> {
+            final android.graphics.Insets safe = insets.getInsets(
+                    android.view.WindowInsets.Type.systemBars() | android.view.WindowInsets.Type.displayCutout());
+            view.setPadding(safe.left, safe.top, safe.right, safe.bottom);
+            return insets;
+        });
         scroll.addView(column);
         setContentView(scroll);
-        restartGameIfAsked(getIntent());
+        if(recoveringImport) recoverInterruptedImport();
+        else restartGameIfAsked(getIntent());
+    }
+
+    private void recoverInterruptedImport() {
+        refresh();
+        new Thread(() -> {
+            String problem=null;
+            try {AppFiles.gameInstall(this).recoverAtStartup(AppFiles::validateImportedGame);}
+            catch(IOException failure) {problem=failure.getMessage();}
+            final String result=problem;
+            main.post(() -> {
+                if(isFinishing()||isDestroyed()) return;
+                recoveringImport=false;
+                recoveryProblem=result;
+                refresh();
+                if(result!=null) return;
+                if(skipAfterRecovery&&AppFiles.gameReady(this)) {
+                    startActivity(new Intent(this,GameActivity.class));
+                    overridePendingTransition(0,0);
+                    finish();
+                } else restartGameIfAsked(getIntent());
+            });
+        },"game-import-recovery").start();
     }
 
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
+        setIntent(intent);
         restartGameIfAsked(intent);
     }
 
     /** Network play: the game asked to be started again into a LAN session. */
     private void restartGameIfAsked(Intent intent) {
+        if(recoveringImport||recoveryProblem!=null) return;
         if (intent == null || !intent.getBooleanExtra(EXTRA_RESTART_GAME, false)) {
             return;
         }
@@ -206,6 +243,14 @@ public final class LauncherActivity extends Activity {
     }
 
     private void refresh() {
+        importFolder.setEnabled(!recoveringImport&&recoveryProblem==null);
+        importZip.setEnabled(!recoveringImport&&recoveryProblem==null);
+        if(recoveringImport||recoveryProblem!=null) {
+            play.setEnabled(false);
+            status.setText(recoveringImport?"Recovering an interrupted game import…"
+                    :"Import recovery needs attention: "+recoveryProblem+". The recovery copy is kept in game.backup.");
+            return;
+        }
         final boolean present = AppFiles.hasGameData(this);
         final String problem = present ? AppFiles.gameProblem(AppFiles.gameDir(this)) : null;
         if (!present) {
@@ -224,13 +269,12 @@ public final class LauncherActivity extends Activity {
         final LinearLayout column = new LinearLayout(this);
         column.setOrientation(LinearLayout.VERTICAL);
         column.setPadding(dp(24), dp(16), dp(24), dp(16));
-        section(column, "1. Import New Super Mario Bros. Wii", DOLPHIN_STEPS);
-        section(column, "2. Play", "Tap Play. For LAN play, move up to the Couch button at the top right of the save file screen and switch it to LAN; "
-                + "every player imports their own game.");
-        section(column, "Stuck on a step?", "The GitHub page covers the supported game, the steps above "
-                + "and common problems.");
-        column.addView(link("Setup Guide on GitHub", v -> openWeb(PROJECT_URL + "#getting-the-game-files")));
-        final TextView version = text("NSMBW " + versionText(), 13);
+        section(column, "1. Import Super Smash Bros. Brawl", DOLPHIN_STEPS);
+        section(column, "2. Play", "Tap Play. A attacks/confirms, B uses specials/goes back, X jumps, L/R shield, Z grabs, START pauses. Left stick moves; the C-stick sends directional attacks.");
+        section(column, "Credits and license", "Brawl Android local adaptation. Based on Brawl Recompiled by josiahg2502-glitch and contributors, WiiCompiled by patchzyy, and the Android frontend by WitherBlitz and contributors. Aurora, Dolphin, SDL and Dawn retain their original credits and licenses. GPLv3; import the assets from your own compatible disc to play.");
+        column.addView(link("Brawl Recompiled upstream and credits", v -> openWeb(PROJECT_URL)));
+        column.addView(link("Original Android frontend", v -> openWeb("https://github.com/WitherBlitz/NSMB-Wii-Multiplayer-Recompilation")));
+        final TextView version = text("Brawl Android " + versionText(), 13);
         version.setGravity(Gravity.START);
         version.setTextColor(Color.rgb(170, 178, 186));
         version.setPadding(0, dp(16), 0, 0);
@@ -306,6 +350,7 @@ public final class LauncherActivity extends Activity {
     }
 
     private void runImport(ImportJob job) {
+        if(recoveringImport||recoveryProblem!=null) return;
         final ProgressBar bar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         final TextView label = text("Looking at the game files…", 14);
         final LinearLayout box = new LinearLayout(this);
@@ -328,8 +373,10 @@ public final class LauncherActivity extends Activity {
                     label.setText(text);
                 }));
             } catch (Exception e) {
-                AppFiles.deleteRecursively(stagingDir());
-                result = "Import failed: " + e.getMessage() + "\n\nNothing was changed.";
+                try {AppFiles.gameInstall(this).discardStaging();}
+                catch(IOException cleanupFailure) {e.addSuppressed(cleanupFailure);}
+                result = "Import failed: " + e.getMessage()
+                        + "\n\nAny previous game is preserved. A recovery copy, if needed, stays in game.backup.";
             }
             final String message = result;
             main.post(() -> {
@@ -344,17 +391,9 @@ public final class LauncherActivity extends Activity {
 
     /** The checked game at `root` (inside the staging folder) becomes the game; saves stay. */
     private String install(File root, int fileCount) throws IOException {
-        final File staging = stagingDir();
-        final String problem = AppFiles.gameProblem(root);
-        if (problem != null) {
-            AppFiles.deleteRecursively(staging);
-            return problem + "\n\nNothing was changed.";
-        }
-        final File game = AppFiles.gameDir(this);
-        AppFiles.deleteRecursively(game);
-        if (!root.renameTo(game)) throw new IOException("cannot move the imported data into place");
-        AppFiles.deleteRecursively(staging);
-        return "Imported " + fileCount + " files. Tap Play to start.";
+        final boolean cleaned=AppFiles.gameInstall(this).install(root,AppFiles::validateImportedGame);
+        return "Imported " + fileCount + " files. Tap Play to start."
+                +(cleaned?"":" Import succeeded; temporary data cleanup is pending.");
     }
 
     /** A folder from the document picker: copied into the staging folder, checked, then swapped in. */
@@ -381,9 +420,11 @@ public final class LauncherActivity extends Activity {
         collect(resolver, tree, rootId, "", files);
 
         final File staging = stagingDir();
-        AppFiles.deleteRecursively(staging);
+        AppFiles.gameInstall(this).discardStaging();
+        final String stagingPath=staging.getCanonicalPath()+File.separator;
         for (int i = 0; i < files.size(); ++i) {
             final File target = new File(staging, files.get(i)[1]);
+            if(!target.getCanonicalPath().startsWith(stagingPath)) throw new IOException("the picked folder contains an unsafe path");
             final File parent = target.getParentFile();
             if (parent != null && !parent.isDirectory() && !parent.mkdirs()) throw new IOException("cannot create " + parent);
             final Uri document = DocumentsContract.buildDocumentUriUsingTree(tree, files.get(i)[0]);
@@ -393,6 +434,7 @@ public final class LauncherActivity extends Activity {
             }
             progress.update(i + 1, files.size(), (i + 1) + " of " + files.size() + " files");
         }
+        progress.update(0,0,"Checking the USA revision 1 executable…");
         return install(staging, files.size());
     }
 
@@ -424,7 +466,7 @@ public final class LauncherActivity extends Activity {
     private String copyZip(Uri zip, Progress progress) throws IOException {
         final long size = documentSize(zip);
         final File staging = stagingDir();
-        AppFiles.deleteRecursively(staging);
+        AppFiles.gameInstall(this).discardStaging();
         if (!staging.mkdirs()) throw new IOException("cannot create " + staging);
         final String stagingPath = staging.getCanonicalPath() + File.separator;
         int count = 0;
@@ -462,10 +504,11 @@ public final class LauncherActivity extends Activity {
         }
         final File root = findGameRoot(staging, 3);
         if (root == null) {
-            AppFiles.deleteRecursively(staging);
+            AppFiles.gameInstall(this).discardStaging();
             return "That zip doesn't hold an extracted game: zip the folder Dolphin's Extract Entire Disc made "
                     + "(the one with files and sys in it).\n\nNothing was changed.";
         }
+        progress.update(0,0,"Checking the USA revision 1 executable…");
         return install(root, count);
     }
 

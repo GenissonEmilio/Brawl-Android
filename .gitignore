@@ -17,7 +17,6 @@
 !/Play/portable.txt
 
 # Agent notes and local reports
-AGENTS.md
 /CODEX_CLAUDE_HANDOFF.md
 /PLAN.md
 /last_run_report.json
@@ -50,3 +49,25 @@ launcher/linux/publish/
 /server/worker/node_modules/
 /server/worker/.wrangler/
 /build-logs-v2/
+
+# Android port: generated output, private content and signing material
+/build/
+/artifacts/
+/build-android-checks/
+/wiicompiled/android-deps-build/
+/wiicompiled/android-build/
+*.rvz
+*.iso
+*.wbfs
+*.wia
+*.gcz
+*.ciso
+*.dol
+*.sav
+*.gci
+*.jks
+*.keystore
+*.log
+local.properties
+/wiicompiled/android/native-stage-*/
+/wiicompiled/android/native-previous/

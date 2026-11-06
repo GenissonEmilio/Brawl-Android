@@ -72,6 +72,9 @@ extern "C" uint8_t* aurora_load_png_rgba(const char* path, uint32_t* width, uint
 #include <dolphin/pad.h>
 
 extern "C" void PAD_HLE_SetRumbleEnabled(bool enabled);
+#if defined(__ANDROID__)
+extern "C" bool BrawlAndroidConsumeStartupPress(bool titleReady);
+#endif
 #include <dolphin/vi.h>
 #include <aurora/aurora.h>
 #include <aurora/gfx.h>
@@ -1588,7 +1591,11 @@ void DrawStartupScreen() {
                 GameLayout::DrawText(list, view, small, u, 0.0f, cardY - 30.0f + bob, Fit(small, u, 17.0f), 0xD6D9E4FFu,
                                      0xB8BCCBFFu, 1.0f, 1, 1);
                 // How to reach the settings, along the card's bottom edge.
+#if defined(__ANDROID__)
+                const auto hint = GameLayout::Utf16("Touch Menu > Start Menu > Settings for options");
+#else
                 const auto hint = GameLayout::Utf16("F10 or Home = options   F5 / F7 = save / load state   F8 = fast-forward   F9 = online");
+#endif
                 GameLayout::DrawText(list, view, small, hint, 0.0f, cardY - hh + 16.0f + bob, Fit(small, hint, 12.0f),
                                      0x8E93A6FFu, 0x8E93A6FFu, 1.0f, 1, 1);
             }
@@ -1662,6 +1669,18 @@ void DrawStartupScreen() {
             ImGui::SetCursorPos(ImVec2(lineX, startY + titleSize.y * 1.8f));
             ImGui::TextUnformatted(shaderLine);
         }
+#if defined(__ANDROID__)
+        else if (!gameFonts) {
+            constexpr const char* press = "Press A or START to start!";
+            constexpr const char* hint = "Touch Menu > Start Menu > Settings for options";
+            ImGui::SetCursorPos(ImVec2(std::max(0.0f, (viewport->Size.x - ImGui::CalcTextSize(press).x) * 0.5f),
+                                       startY + 24.0f));
+            ImGui::TextUnformatted(press);
+            ImGui::SetCursorPos(ImVec2(std::max(0.0f, (viewport->Size.x - ImGui::CalcTextSize(hint).x) * 0.5f),
+                                       startY + 52.0f));
+            ImGui::TextUnformatted(hint);
+        }
+#endif
     }
     ImGui::End();
     ImGui::PopStyleVar();
@@ -1690,6 +1709,9 @@ void UpdateBootShaderState() {
 // The button that starts, as printed on the first connected gamepad (its bottom face button: A on Xbox and GameCube
 // style pads, B on Nintendo's, Cross on PlayStation's), or Enter without one.
 std::string StartButtonName() {
+#if defined(__ANDROID__)
+    return "A or START";
+#else
     int count = 0;
     SDL_JoystickID* ids = SDL_GetGamepads(&count);
     std::string name = "Enter";
@@ -1703,6 +1725,7 @@ std::string StartButtonName() {
     }
     SDL_free(ids);
     return name;
+#endif
 }
 
 // The title card lifts on the start button (any gamepad's bottom face button or Start), Enter or Space, or a click,
@@ -1710,8 +1733,14 @@ std::string StartButtonName() {
 void UpdateStartupPress() {
     static int shownFrames = 0;
     if (!g_bootShadersReady.load(std::memory_order_acquire) || g_strapInputAccepted.load(std::memory_order_acquire)) return;
+#if defined(__ANDROID__)
+    if (!g_busyLabel.empty()) return;
+#endif
     if (++shownFrames < 90) return;
     bool pressed = false;
+#if defined(__ANDROID__)
+    pressed = BrawlAndroidConsumeStartupPress(true);
+#endif
     int count = 0;
     SDL_JoystickID* ids = SDL_GetGamepads(&count);
     for (int i = 0; ids != nullptr && i < count; ++i) {
@@ -1761,7 +1790,11 @@ void DrawTopBar() {
                      ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings |
                      ImGuiWindowFlags_NoFocusOnAppearing)) {
         for (const char* line : {"Settings open - game controls disabled.",
+#if defined(__ANDROID__)
+                                 "Touch Menu > Start Menu for launcher settings."}) {
+#else
                                  "Press F10 to return to the game."}) {
+#endif
             ImGui::SetCursorPosX((ImGui::GetWindowWidth() - ImGui::CalcTextSize(line).x) * 0.5f);
             ImGui::TextUnformatted(line);
         }

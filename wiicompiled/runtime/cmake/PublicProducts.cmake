@@ -386,9 +386,11 @@ set(MKW_HOST_ISA "v3" CACHE STRING "x86_64 floor: v3 (AVX2/FMA, the usual build)
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64|amd64|x86_64|X86_64)$")
     set(MKW_BASELINE_ARCH_FLAG -march=x86-64-${MKW_HOST_ISA})
 elseif(MKW_PLATFORM_ANDROID)
-    # Cross-compiled, so -mcpu=native would describe the build machine. ARMv8.2-A (LSE atomics,
-    # RCpc loads) is the floor of every Android phone since Cortex-A55/A75.
-    set(MKW_BASELINE_ARCH_FLAG -march=armv8.2-a)
+    # arm64-v8a guarantees ARMv8-A, not the optional instructions in ARMv8.2-A.
+    # Cross builds must never infer the phone's ISA from the build machine.
+    # Device-specific builds can explicitly raise this after checking the CPU.
+    set(MKW_ANDROID_ARCH "armv8-a" CACHE STRING "Android ARM64 instruction-set baseline")
+    set(MKW_BASELINE_ARCH_FLAG "-march=${MKW_ANDROID_ARCH}")
 elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$")
     set(MKW_BASELINE_ARCH_FLAG -mcpu=native)
 else()
