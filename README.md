@@ -6,6 +6,13 @@ analógicos independentes e runtime nativo sobre Vulkan/SDL3. Consulte o
 Requer os dados da própria cópia USA RSBE01, revisão 1. Histórico, créditos e
 licenças originais preservados; projeto independente e em desenvolvimento.
 
+Foram validadas lutas no Battlefield com Mario, Pit e Diddy Kong, além de
+multitoque e persistência/restauração de saves. Nas sessões medidas, houve cerca
+de 42–44 apresentações por segundo; 60 FPS constantes ainda não foram alcançados.
+Campanha, todos os cenários e modos online continuam sem validação Android.
+O repositório contém código, testes e documentação. A imagem do jogo, os dados
+extraídos e os artefatos compilados permanecem locais.
+
 A documentação original do port para PC segue abaixo.
 
 # Brawl Recompiled

@@ -126,8 +126,8 @@ resolução para produzir um número melhor.
 - Versão `0.1.0-dev`, código 1, ARM64, Android 12/API 31 ou superior.
 
 APK, traduções e dados de inicialização gerados a partir da entrada privada são
-artefatos locais ignorados pelo Git. Esta execução não publicou repositório ou
-release do Brawl.
+artefatos locais ignorados pelo Git. A publicação do código-fonte não inclui
+esses arquivos nem constitui uma release do APK.
 
 ## Limites
 
