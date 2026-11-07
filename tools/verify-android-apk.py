@@ -2,6 +2,7 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path, PurePosixPath
 import re
 import struct
@@ -16,12 +17,16 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('apk', type=Path)
     p.add_argument('--staging-manifest', type=Path, default=Path(__file__).resolve().parents[1] / 'wiicompiled/android/native/staging-manifest.json')
-    p.add_argument('--aapt', type=Path, default=Path(__file__).resolve().parents[2] / '.tools/android-sdk/build-tools/35.0.0/aapt.exe')
+    default_sdk = Path(os.environ.get('ANDROID_SDK_ROOT') or os.environ.get('ANDROID_HOME') or (Path(__file__).resolve().parents[2] / '.tools/android-sdk' if os.name == 'nt' else Path.home() / '.local/share/android-sdk'))
+    p.add_argument('--sdk', type=Path, default=default_sdk)
+    p.add_argument('--aapt', type=Path, help='override SDK build-tools/35.0.0/aapt')
     args = p.parse_args()
+    args.aapt = args.aapt or args.sdk / 'build-tools/35.0.0' / ('aapt.exe' if os.name == 'nt' else 'aapt')
+    assert args.aapt.is_file() and (os.name == 'nt' or os.access(args.aapt, os.X_OK)), f'Missing Android SDK aapt: {args.aapt}'
     staging = json.loads(args.staging_manifest.read_text(encoding='utf-8'))
     badging = subprocess.check_output([str(args.aapt), 'dump', 'badging', str(args.apk)], text=True, encoding='utf-8')
     assert "name='com.genisson.brawl.android'" in badging
-    assert "versionName='0.1.0-dev'" in badging and "sdkVersion:'31'" in badging
+    assert "versionName='0.1.1-dev'" in badging and "sdkVersion:'31'" in badging
     manifest = subprocess.check_output([str(args.aapt), 'dump', 'xmltree', str(args.apk), 'AndroidManifest.xml'], text=True)
     assert 'android:debuggable' not in manifest, 'Unexpected debuggable release'
     icons = re.findall(r"application-icon-[^:]+:'([^']+)'", badging)

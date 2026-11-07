@@ -34,6 +34,13 @@ public final class TouchInputHostTest {
         check(run>BrawlTouchInput.WALK_RUN_THRESHOLD&&run<BrawlTouchInput.SMASH_THRESHOLD,"run analog travel");
         check(smash>BrawlTouchInput.SMASH_THRESHOLD,"full flick travel");
         near(BrawlTouchInput.analog(Float.NaN,0)[0],0,"reject NaN");
+        near(BrawlTouchInput.directionalPad(.4f,0)[0],1,"right C-pad is discrete at partial travel");
+        near(BrawlTouchInput.directionalPad(0,-.4f)[1],-1,"down C-pad is discrete at partial travel");
+        near(BrawlTouchInput.directionalPad(.1f,.1f)[0],0,"C-pad centre is neutral");
+        near(BrawlTouchInput.directionalPad(Float.NaN,1)[1],0,"C-pad rejects nonfinite coordinates");
+        float[] diagonal=BrawlTouchInput.directionalPad(.6f,.6f);
+        near((float)Math.hypot(diagonal[0],diagonal[1]),1,"C-pad diagonal preserves circular C-stick range");
+        check(diagonal[0]>0&&diagonal[1]>0,"C-pad diagonal has both directions");
         press(i,4,BrawlTouchInput.MOVE);i.move(4,move.x+move.r,move.y);
         press(i,8,BrawlTouchInput.MOVE);i.move(8,move.x-move.r,move.y);near(i.state().x,1,"second finger cannot steal stick");
         BrawlTouchInput.Control a=i.control(BrawlTouchInput.A);press(i,12,BrawlTouchInput.A);i.move(12,move.x,move.y);near(i.state().x,1,"crossing buttons cannot steal stick");check(i.state().buttons==0,"drag off releases its owned button");i.move(12,a.x,a.y);check(i.state().buttons==BrawlTouchInput.A,"return reengages same button");

@@ -84,6 +84,8 @@ struct PresentTimingSample {
 };
 
 std::mutex g_presentTimingMutex;
+std::mutex g_presentViewportMutex;
+AuroraPresentViewport g_presentViewport{};
 std::array<PresentTimingSample, 512> g_presentTimingSamples{};
 size_t g_presentTimingWriteIndex = 0;
 size_t g_presentTimingSampleCount = 0;
@@ -1357,6 +1359,11 @@ wgpu::BindGroup encode_presentation_snapshot(wgpu::CommandEncoder& encoder,
     viewport = webgpu::calculate_present_viewport_for_aspect(
         image.texture.size.width, image.texture.size.height, presentAspect);
   }
+  {
+    std::lock_guard viewportLock(g_presentViewportMutex);
+    g_presentViewport = {viewport.left, viewport.top, viewport.width, viewport.height,
+                        image.texture.size.width, image.texture.size.height};
+  }
   wgpu::BindGroup presentBindGroup = presentSource.bindGroup;
   wgpu::BindGroup newMetalFXOutput;
   if (cachedMetalFXOutput && *cachedMetalFXOutput) {
@@ -2065,6 +2072,13 @@ void aurora_get_present_timing(AuroraPresentTiming* timing) {
   if (timing != nullptr) {
     *timing = aurora::snapshot_present_timing();
   }
+}
+bool aurora_get_present_viewport(AuroraPresentViewport* viewport) {
+  if (viewport == nullptr) return false;
+  std::lock_guard viewportLock(aurora::g_presentViewportMutex);
+  *viewport = aurora::g_presentViewport;
+  return viewport->surface_width > 0 && viewport->surface_height > 0 &&
+         viewport->width > 0 && viewport->height > 0;
 }
 void aurora_set_vsync(bool enabled) { aurora::webgpu::request_vsync(enabled); }
 bool aurora_get_vsync() { return aurora::webgpu::vsync_enabled(); }

@@ -46,12 +46,28 @@ extern "C" uint8_t g_mkwGuestCodePatched[];
 namespace GuestCodePatch {
 void RunPatched(uint32_t address, CpuContext* ctx);
 }
+namespace BrawlMenuTouch {
+void ObserveGuestEntry(uint32_t address, CpuContext* ctx) noexcept;
+}
+#if defined(__ANDROID__)
+// A constant condition at each generated entry removes the observer entirely
+// from unrelated functions, including direct calls that bypass ABI dispatch.
+#define BRAWL_MENU_ENTRY_OBSERVER(address, ctx)                  \
+    do {                                                        \
+        if constexpr ((address) == 0x8069D2F8u || (address) == 0x806A50F4u || \
+                      (address) == 0x800BF78Cu || (address) == 0x806A4E04u || (address) == 0x806B626Cu || (address) == 0x800F14C0u || (address) == 0x800EB684u) \
+            BrawlMenuTouch::ObserveGuestEntry(address, ctx);    \
+    } while (false)
+#else
+#define BRAWL_MENU_ENTRY_OBSERVER(address, ctx) do {} while (false)
+#endif
 #define MKW_GUEST_CODE_GUARD(index, address)                    \
     do {                                                        \
         if (__builtin_expect(g_mkwGuestCodePatched[index], 0)) { \
             GuestCodePatch::RunPatched(address, ctx);           \
             return;                                             \
         }                                                       \
+        BRAWL_MENU_ENTRY_OBSERVER(address, ctx);                \
     } while (false)
 
 // Persistent per-thread CPU context used across translated function calls.

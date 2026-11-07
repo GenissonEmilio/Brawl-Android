@@ -16,6 +16,11 @@ struct TouchPadSample {
 // Cancel is different from UP: no pending edge may survive a cancelled gesture/session.
 class TouchPadState {
 public:
+    void Tap(uint16_t buttons) {
+        if (!enabled_) return;
+        pendingPress_ |= buttons;
+        pendingStartupPress_ |= static_cast<uint16_t>(buttons & kStartupButtons);
+    }
     void Set(uint16_t buttons, std::array<int8_t, 4> axes, bool enabled) {
         enabled_ = enabled;
         if (!enabled) {
@@ -28,6 +33,9 @@ public:
         pendingStartupPress_ |= static_cast<uint16_t>(buttons & ~held_ & kStartupButtons);
         startupSuppressed_ &= buttons;
         held_ = buttons;
+        // A short directional-pad tap must reach one PAD read just like a button.
+        // Main-stick motion remains continuous and is never latched.
+        if (axes[2] != 0 || axes[3] != 0) pendingC_ = {axes[2], axes[3]};
         axes_ = axes;
     }
 
@@ -37,6 +45,7 @@ public:
         pendingStartupPress_ = 0;
         startupSuppressed_ = 0;
         axes_ = {};
+        pendingC_ = {};
         // A cancelled gesture does not connect/disconnect a controller.
     }
 
@@ -44,6 +53,11 @@ public:
         if (port != 0 || !enabled_) return false;
         out.buttons = static_cast<uint16_t>((held_ | pendingPress_) & ~startupSuppressed_);
         out.axes = axes_;
+        if (out.axes[2] == 0 && out.axes[3] == 0) {
+            out.axes[2] = pendingC_[0];
+            out.axes[3] = pendingC_[1];
+        }
+        pendingC_ = {};
         pendingPress_ = 0;
         return true;
     }
@@ -67,6 +81,7 @@ private:
     uint16_t pendingStartupPress_ = 0;
     uint16_t startupSuppressed_ = 0;
     std::array<int8_t, 4> axes_{};
+    std::array<int8_t, 2> pendingC_{};
 };
 
 } // namespace BrawlAndroid

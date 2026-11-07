@@ -66,6 +66,35 @@ public final class LauncherActivity extends Activity {
     private Button importFolder,importZip;
     private View steps;
     private boolean recoveringImport;
+    private final ImportLifecycle importLifecycle = new ImportLifecycle();
+    private AlertDialog importDialog;
+    private ProgressBar importBar;
+    private TextView importLabel;
+    private static final class ImportState {
+        volatile boolean running=true;
+        volatile int done,total;
+        volatile String text="Looking at the game files…",result;
+    }
+    private static ImportState activeImport;
+    private static final Object RECOVERY_LOCK=new Object();
+    private final Runnable importPoll = new Runnable() {
+        @Override public void run() {
+            ImportState state=activeImport;
+            if(state==null || !importLifecycle.canPresent() || isFinishing() || isDestroyed()) return;
+            if(state.running) {
+                if(importDialog==null) showImportProgress();
+                importBar.setIndeterminate(state.total<=0);
+                if(state.total>0) {importBar.setMax(state.total);importBar.setProgress(state.done);}
+                importLabel.setText(state.text);
+                main.postDelayed(this,100);
+            } else {
+                dismissImportProgress();
+                activeImport=null;
+                refresh();
+                new AlertDialog.Builder(LauncherActivity.this).setMessage(state.result).setPositiveButton("OK",null).show();
+            }
+        }
+    };
     private String recoveryProblem;
     private boolean skipAfterRecovery;
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -79,14 +108,8 @@ public final class LauncherActivity extends Activity {
         final Intent launch = getIntent();
         final boolean asked = launch != null && (launch.getBooleanExtra(EXTRA_SHOW_START_MENU, false)
                 || launch.getBooleanExtra(EXTRA_RESTART_GAME, false));
-        recoveringImport=new File(AppFiles.dataDir(this),"game.backup").exists();
+        recoveringImport=activeImport==null;
         skipAfterRecovery=savedInstanceState==null&&!asked&&settings.skipStartMenu();
-        if (!recoveringImport && skipAfterRecovery && AppFiles.gameReady(this)) {
-            startActivity(new Intent(this, GameActivity.class));
-            overridePendingTransition(0, 0);
-            finish();
-            return;
-        }
         final int pad = dp(24);
         final LinearLayout column = new LinearLayout(this);
         column.setOrientation(LinearLayout.VERTICAL);
@@ -196,10 +219,10 @@ public final class LauncherActivity extends Activity {
         refresh();
         new Thread(() -> {
             String problem=null;
-            try {AppFiles.gameInstall(this).recoverAtStartup(AppFiles::validateImportedGame);}
+            try {synchronized(RECOVERY_LOCK) {AppFiles.gameInstall(this).recoverAtStartup(AppFiles::validateImportedGame);}}
             catch(IOException failure) {problem=failure.getMessage();}
             final String result=problem;
-            main.post(() -> {
+            main.post(() -> importLifecycle.deliver(() -> {
                 if(isFinishing()||isDestroyed()) return;
                 recoveringImport=false;
                 recoveryProblem=result;
@@ -210,7 +233,7 @@ public final class LauncherActivity extends Activity {
                     overridePendingTransition(0,0);
                     finish();
                 } else restartGameIfAsked(getIntent());
-            });
+            }));
         },"game-import-recovery").start();
     }
 
@@ -223,19 +246,39 @@ public final class LauncherActivity extends Activity {
 
     /** Network play: the game asked to be started again into a LAN session. */
     private void restartGameIfAsked(Intent intent) {
-        if(recoveringImport||recoveryProblem!=null) return;
+        if(activeImport!=null||recoveringImport||recoveryProblem!=null) return;
         if (intent == null || !intent.getBooleanExtra(EXTRA_RESTART_GAME, false)) {
             return;
         }
         intent.removeExtra(EXTRA_RESTART_GAME);
         status.setText("Starting the LAN game...");
-        main.postDelayed(() -> startActivity(new Intent(this, GameActivity.class)), 700);
+        main.postDelayed(() -> importLifecycle.deliver(() -> {
+            if(!isFinishing()) startActivity(new Intent(this, GameActivity.class));
+        }), 700);
     }
 
     @Override
     protected void onResume() {
         super.onResume();
+        importLifecycle.resume();
         refresh();
+        if(activeImport!=null) main.post(importPoll);
+    }
+
+    @Override protected void onPause() {
+        importLifecycle.pause();
+        main.removeCallbacks(importPoll);
+        dismissImportProgress();
+        super.onPause();
+    }
+    @Override protected void onDestroy() {
+        importLifecycle.destroy();
+        main.removeCallbacks(importPoll);
+        dismissImportProgress();
+        super.onDestroy();
+    }
+    private void dismissImportProgress() {
+        if(importDialog!=null) {importDialog.dismiss();importDialog=null;}
     }
 
     private void updateSkipButton() {
@@ -243,11 +286,13 @@ public final class LauncherActivity extends Activity {
     }
 
     private void refresh() {
-        importFolder.setEnabled(!recoveringImport&&recoveryProblem==null);
-        importZip.setEnabled(!recoveringImport&&recoveryProblem==null);
+        if(play==null) return;
+        boolean importing=activeImport!=null;
+        importFolder.setEnabled(!importing&&!recoveringImport&&recoveryProblem==null);
+        importZip.setEnabled(!importing&&!recoveringImport&&recoveryProblem==null);
         if(recoveringImport||recoveryProblem!=null) {
             play.setEnabled(false);
-            status.setText(recoveringImport?"Recovering an interrupted game import…"
+            status.setText(recoveringImport?"Checking previous game import…"
                     :"Import recovery needs attention: "+recoveryProblem+". The recovery copy is kept in game.backup.");
             return;
         }
@@ -260,7 +305,7 @@ public final class LauncherActivity extends Activity {
         } else {
             status.setText("Game data is installed and checked.");
         }
-        play.setEnabled(present && problem == null);
+        play.setEnabled(!importing && present && problem == null);
         steps.setVisibility(present && problem == null ? View.GONE : View.VISIBLE);
     }
 
@@ -349,42 +394,34 @@ public final class LauncherActivity extends Activity {
         Entry(String id, String name, boolean directory) { this.id = id; this.name = name; this.directory = directory; }
     }
 
+    private void showImportProgress() {
+        importBar=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);
+        importLabel=text("Looking at the game files…",14);
+        LinearLayout box=new LinearLayout(this);box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(24),dp(16),dp(24),dp(8));box.addView(importBar);box.addView(importLabel);
+        importDialog=new AlertDialog.Builder(this).setTitle("Importing game data").setView(box).setCancelable(false).show();
+    }
     private void runImport(ImportJob job) {
-        if(recoveringImport||recoveryProblem!=null) return;
-        final ProgressBar bar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
-        final TextView label = text("Looking at the game files…", 14);
-        final LinearLayout box = new LinearLayout(this);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(24), dp(16), dp(24), dp(8));
-        box.addView(bar);
-        box.addView(label);
-        final AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle("Importing game data").setView(box).setCancelable(false).show();
-
+        if(recoveringImport||recoveryProblem!=null||activeImport!=null) return;
+        final ImportState state=new ImportState();activeImport=state;
+        refresh();main.post(importPoll);
         new Thread(() -> {
             String result;
             try {
-                result = job.run((done, total, text) -> main.post(() -> {
-                    bar.setIndeterminate(total <= 0);
-                    if (total > 0) {
-                        bar.setMax(total);
-                        bar.setProgress(done);
+                GameInstallTransaction transaction=AppFiles.gameInstall(this);
+                try(GameInstallTransaction.ImportLease lease=transaction.beginImport()) {
+                    try {
+                        result=job.run((done,total,text) -> {state.done=done;state.total=total;state.text=text;});
+                    } catch(Exception failure) {
+                        try {transaction.discardStaging();} catch(IOException cleanup) {failure.addSuppressed(cleanup);}
+                        throw failure;
                     }
-                    label.setText(text);
-                }));
-            } catch (Exception e) {
-                try {AppFiles.gameInstall(this).discardStaging();}
-                catch(IOException cleanupFailure) {e.addSuppressed(cleanupFailure);}
-                result = "Import failed: " + e.getMessage()
-                        + "\n\nAny previous game is preserved. A recovery copy, if needed, stays in game.backup.";
+                }
+            } catch(Exception failure) {
+                result="Import failed: "+failure.getMessage()+"\n\nAny previous game is preserved. A recovery copy, if needed, stays in game.backup.";
             }
-            final String message = result;
-            main.post(() -> {
-                dialog.dismiss();
-                refresh();
-                new AlertDialog.Builder(this).setMessage(message).setPositiveButton("OK", null).show();
-            });
-        }, "game-import").start();
+            state.result=result;state.running=false;
+        },"game-import").start();
     }
 
     private File stagingDir() { return new File(AppFiles.dataDir(this), "game.importing"); }
@@ -422,9 +459,14 @@ public final class LauncherActivity extends Activity {
         final File staging = stagingDir();
         AppFiles.gameInstall(this).discardStaging();
         final String stagingPath=staging.getCanonicalPath()+File.separator;
+        int copiedFiles=0;
         for (int i = 0; i < files.size(); ++i) {
             final File target = new File(staging, files.get(i)[1]);
             if(!target.getCanonicalPath().startsWith(stagingPath)) throw new IOException("the picked folder contains an unsafe path");
+            if(files.get(i)[0]==null) {
+                if(!target.isDirectory()&&!target.mkdirs()) throw new IOException("cannot create "+target);
+                continue;
+            }
             final File parent = target.getParentFile();
             if (parent != null && !parent.isDirectory() && !parent.mkdirs()) throw new IOException("cannot create " + parent);
             final Uri document = DocumentsContract.buildDocumentUriUsingTree(tree, files.get(i)[0]);
@@ -432,10 +474,11 @@ public final class LauncherActivity extends Activity {
                 if (in == null) throw new IOException("cannot read " + files.get(i)[1]);
                 AppFiles.copy(in, out);
             }
-            progress.update(i + 1, files.size(), (i + 1) + " of " + files.size() + " files");
+            copiedFiles++;
+            progress.update(i + 1, files.size(), (i + 1) + " of " + files.size() + " entries");
         }
         progress.update(0,0,"Checking the USA revision 1 executable…");
-        return install(staging, files.size());
+        return install(staging, copiedFiles);
     }
 
     /** sys/boot.bin of the picked folder names the game and its revision. */
@@ -567,7 +610,7 @@ public final class LauncherActivity extends Activity {
     private void collect(ContentResolver resolver, Uri tree, String id, String prefix, List<String[]> out) {
         for (Entry e : list(resolver, tree, id)) {
             final String path = prefix.isEmpty() ? e.name : prefix + "/" + e.name;
-            if (e.directory) collect(resolver, tree, e.id, path, out);
+            if (e.directory) {out.add(new String[] {null,path});collect(resolver, tree, e.id, path, out);}
             else out.add(new String[] {e.id, path});
         }
     }

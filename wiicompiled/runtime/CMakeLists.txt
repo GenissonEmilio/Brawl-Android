@@ -342,6 +342,15 @@ endif()
 # a registration file is silently never compiled and never errors. The stale-glob
 # failure mode is worth far more than the milliseconds.
 file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS "src/*.cpp")
+if(MKW_PLATFORM_ANDROID)
+    # Touch hit tests reject nonfinite/incomplete geometry. Keep those checks
+    # effective even though the rest of the runtime uses fast floating point.
+    set_source_files_properties(
+        src/android/android_bridge.cpp src/android/brawl_menu_touch.cpp
+        PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON
+                   SKIP_PRECOMPILE_HEADERS ON
+                   COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
+endif()
 if(MKW_PLATFORM_MACOS)
     list(REMOVE_ITEM SOURCES "${CMAKE_CURRENT_LIST_DIR}/src/guest_flat_memory.cpp")
     if(MKW_PLATFORM_MACOS_ARM64)

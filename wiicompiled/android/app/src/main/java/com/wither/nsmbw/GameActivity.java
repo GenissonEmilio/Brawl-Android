@@ -29,6 +29,10 @@ public final class GameActivity extends SDLActivity
     /** Player 1's GameCube overlay, independent of SDL physical controller enumeration. */
     static native void nativeSetTouchState(int buttons, float x, float y, float cx, float cy, boolean enabled);
     static native void nativeCancelTouchState();
+    /** Original Brawl menu items; geometry and selection stay on the native game thread. */
+    static native boolean nativeTapScreen();
+    static native void nativeTap(float x,float y);
+    static native void nativePointer(int action,int id,float x,float y);
 
     /** The Display menu: aspect, render scale (480 lines per 1x), FPS counter (DisplaySettings). */
     static native void nativeApplyDisplaySettings(int aspect, float renderScale, boolean showFps);
@@ -51,6 +55,8 @@ public final class GameActivity extends SDLActivity
     private boolean bootWidescreen;  // the game reads 4:3 versus widescreen once, when it starts
     private TouchControlsView touch;
     private boolean nativeReady;
+    private boolean touchEnabled;
+    private android.window.OnBackInvokedCallback backCallback;
     private BrawlTouchInput.State touchState = new BrawlTouchInput.State(0,0,0,0,0);
 
     @Override
@@ -68,6 +74,11 @@ public final class GameActivity extends SDLActivity
             Toast.makeText(this, "Could not prepare the game's files: " + e.getMessage(), Toast.LENGTH_LONG).show();
         }
         super.onCreate(savedInstanceState);
+        if (Build.VERSION.SDK_INT >= 33) {
+            backCallback = this::onMenu;
+            getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
+                    android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, backCallback);
+        }
         nativeReady = !SDLActivity.mBrokenLibraries;
         if (nativeReady) {
             nativeSetDeviceName(deviceName());
@@ -94,12 +105,13 @@ public final class GameActivity extends SDLActivity
         return new String[] {"main"};
     }
 
-    // Preserve native settings changes; GameCube controls remain available in Brawl's menus.
+    // Preserve display choices and switch the overlay to direct taps for native menus.
     private final android.os.Handler menuPoll = new android.os.Handler(android.os.Looper.getMainLooper());
     private final Runnable pollMenu = new Runnable() {
         @Override
         public void run() {
             if (nativeReady) {
+                if (touch != null) touch.setMenuMode(nativeTapScreen());
                 // The game's settings window: keep its choices, the config is rewritten at each start.
                 final float[] changed = nativeTakeSettings();
                 if (changed != null) {
@@ -110,8 +122,6 @@ public final class GameActivity extends SDLActivity
                     if (changed.length > 4) settings.setFrameGraph(changed[4] > 0.5f);
                 }
             }
-            // Brawl menus accept the same GameCube A/B/stick controls as a match.
-            // Never hide them using NSMBW-specific menu detection or synthesize menu taps.
             menuPoll.postDelayed(this, 100);
         }
     };
@@ -130,7 +140,7 @@ public final class GameActivity extends SDLActivity
         menuPoll.removeCallbacks(pollMenu);
         if (touch != null) touch.release();
         // Backgrounding clears input, without unplugging Player 1 for a resumed frame.
-        if (nativeReady) nativeSetTouchState(0,0,0,0,0,settings.touchControls());
+        if (nativeReady) nativeSetTouchState(0,0,0,0,0,touchEnabled || (touch != null && touch.isMenuMode()));
         super.onPause();
     }
 
@@ -204,6 +214,11 @@ public final class GameActivity extends SDLActivity
 
     @Override
     protected void onDestroy() {
+        if(touch!=null) touch.release();
+        if (Build.VERSION.SDK_INT >= 33 && backCallback != null) {
+            getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backCallback);
+            backCallback = null;
+        }
         if (multicastLock != null && multicastLock.isHeld()) {
             multicastLock.release();
         }
@@ -232,7 +247,7 @@ public final class GameActivity extends SDLActivity
         if (!nativeReady) return;
         try {
             nativeSetTouchState(touchState.buttons,touchState.x,touchState.y,touchState.cx,touchState.cy,
-                    settings.touchControls());
+                    touchEnabled || (touch != null && touch.isMenuMode()));
         } catch (UnsatisfiedLinkError e) {
             nativeReady = false;
             Log.e(TAG, "touch input bridge missing from libmain.so", e);
@@ -240,9 +255,20 @@ public final class GameActivity extends SDLActivity
     }
 
     private void applyControlSettings() {
-        touch.setControlsVisible(settings.touchControls());
+        touchEnabled = settings.touchControls();
+        touch.setControlsVisible(touchEnabled);
         touch.setOpacity(settings.touchOpacity());
         touch.setHaptics(settings.haptics());
+    }
+
+    @Override
+    public void onMenuTap(float x,float y) {
+        if (nativeReady) nativeTap(x,y);
+    }
+
+    @Override
+    public void onMenuPointer(int action,int id,float x,float y) {
+        if(nativeReady) nativePointer(action,id,x,y);
     }
 
     private void hideSystemBars() {

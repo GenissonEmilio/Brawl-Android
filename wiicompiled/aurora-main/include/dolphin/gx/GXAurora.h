@@ -101,6 +101,8 @@ void AuroraSetViewportFixedAspect(float aspect);
 // NSMBW: widen cameras (perspective, and screen-sized orthographic) set up for 16:9 to this aspect
 // (0 = off), for a screen the picture fills that is wider than 16:9.
 void AuroraSetWidePerspectiveAspect(float aspect);
+// Same Hor+ horizontal factor used by GX, for hit-testing original guest projections.
+float AuroraProjectionHorizontalScale(float m00, float m11, float viewportWidth, float viewportHeight);
 // NSMBW: copies that patch part of a texture (animated tiles: spinning coins...) on or off.
 void AuroraSetTexturePatches(bool enabled);
 // NSMBW: GX decoding time, renderer-lock wait and draw count since the last call (profiling).

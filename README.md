@@ -1,15 +1,19 @@
 # Brawl Android — experimental
 
 Adaptação Android ARM64 do BrawlRecompiled, com controles GameCube multitoque,
-analógicos independentes e runtime nativo sobre Vulkan/SDL3. Consulte o
-[guia Android](docs/ANDROID_PORT.md) e a [validação desta versão](docs/ANDROID_VALIDATION_0.1.0.md).
+analógico de movimento, D-pad para ataques do C-stick e runtime nativo sobre Vulkan/SDL3.
+Os menus compatíveis recebem toque direto e mostram somente START.
+Consulte o [guia Android](docs/ANDROID_PORT.md) e a
+[validação da versão 0.1.1-dev](docs/ANDROID_VALIDATION_0.1.1.md).
 Requer os dados da própria cópia USA RSBE01, revisão 1. Histórico, créditos e
 licenças originais preservados; projeto independente e em desenvolvimento.
 
-Foram validadas lutas no Battlefield com Mario, Pit e Diddy Kong, além de
-multitoque e persistência/restauração de saves. Nas sessões medidas, houve cerca
-de 42–44 apresentações por segundo; 60 FPS constantes ainda não foram alcançados.
-Campanha, todos os cenários e modos online continuam sem validação Android.
+Uma sessão 0.1.1-dev percorreu os menus por toque até Mario contra CPU no Battlefield,
+com ações e dano observados durante os testes multitoque. A importação completa
+também passou por rotação e segundo plano no aparelho. Telas especiais ainda podem
+usar o controle virtual; câmera de foto, pausa e resultados continuam experimentais.
+Não há nova medição de FPS sustentados nem validação completa de campanha e online.
+Os resultados anteriores permanecem no [relatório 0.1.0](docs/ANDROID_VALIDATION_0.1.0.md).
 O repositório contém código, testes e documentação. A imagem do jogo, os dados
 extraídos e os artefatos compilados permanecem locais.
 

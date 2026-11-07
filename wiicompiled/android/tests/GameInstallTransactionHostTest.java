@@ -126,6 +126,19 @@ public final class GameInstallTransactionHostTest {
             rejects(() -> tx.install(c,validate),"bad executable digest must reject the transaction");
             check(calls.get()==0&&f.marker(f.game).equals("old"),"checksum mismatch leaves old game in place");f.unrelatedPreserved();
         }});
+        run("startup discards orphan staging without a backup",() -> {try(Fixture f=new Fixture()) {
+            f.candidate("new");new GameInstallTransaction(f.base.toFile()).recoverAtStartup(f.validator);
+            check(!f.staging.exists()&&f.marker(f.game).equals("old"),"orphan copy reclaimed and installation retained");f.unrelatedPreserved();
+        }});
+        run("active import lease blocks recovery and a second copier",() -> {try(Fixture f=new Fixture()) {
+            File candidate=f.candidate("new");GameInstallTransaction tx=new GameInstallTransaction(f.base.toFile());
+            try(GameInstallTransaction.ImportLease lease=tx.beginImport()) {
+                rejects(() -> tx.beginImport(),"second import must not overlap");
+                rejects(() -> tx.recoverAtStartup(f.validator),"startup must not remove an active copy");
+                check(candidate.exists(),"active copy preserved");
+            }
+            tx.recoverAtStartup(f.validator);check(!f.staging.exists(),"lease released and orphan cleanup succeeds");f.unrelatedPreserved();
+        }});
         System.out.println("PASS: import transaction cases="+cases+" checks="+checks);
     }
 }

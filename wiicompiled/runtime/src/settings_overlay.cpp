@@ -15,6 +15,9 @@ extern "C" uint8_t* aurora_load_png_rgba(const char* path, uint32_t* width, uint
 #include "netplay_session.h"
 #include "netplay_ui.h"
 #include "settings_overlay.h"
+#if defined(__ANDROID__)
+#include "android/brawl_menu_touch.h"
+#endif
 #include "online_menu.h"
 #include "graphics_info.h"
 #include "hle/gecko.h"
@@ -74,6 +77,7 @@ extern "C" uint8_t* aurora_load_png_rgba(const char* path, uint32_t* width, uint
 extern "C" void PAD_HLE_SetRumbleEnabled(bool enabled);
 #if defined(__ANDROID__)
 extern "C" bool BrawlAndroidConsumeStartupPress(bool titleReady);
+extern "C" void BrawlAndroidSetStartupScreen(bool visible);
 #endif
 #include <dolphin/vi.h>
 #include <aurora/aurora.h>
@@ -1592,7 +1596,7 @@ void DrawStartupScreen() {
                                      0xB8BCCBFFu, 1.0f, 1, 1);
                 // How to reach the settings, along the card's bottom edge.
 #if defined(__ANDROID__)
-                const auto hint = GameLayout::Utf16("Touch Menu > Start Menu > Settings for options");
+                const auto hint = GameLayout::Utf16("Phone Back > Start Menu > Settings for options");
 #else
                 const auto hint = GameLayout::Utf16("F10 or Home = options   F5 / F7 = save / load state   F8 = fast-forward   F9 = online");
 #endif
@@ -1620,7 +1624,11 @@ void DrawStartupScreen() {
                 // Press start: A on a GameCube controller (any gamepad's bottom face button), Enter on the keyboard
                 // pad, A or 2 on a Wii Remote (frame_input.cpp lifts the cover).
                 const float pop = 1.0f + 0.06f * std::sin(t * 5.0f), py = cardY - 82.0f + bob;
+#if defined(__ANDROID__)
+                const auto press = GameLayout::Utf16("Tap the screen or START to start!");
+#else
                 const auto press = GameLayout::Utf16("Press " + StartButtonName() + " to start!");
+#endif
                 const float fs = Fit(*pmFont, press, 26.0f) * pop;
                 for (int j = 0; j < 12; ++j) {
                     const float a = j * 0.5236f;
@@ -1671,8 +1679,8 @@ void DrawStartupScreen() {
         }
 #if defined(__ANDROID__)
         else if (!gameFonts) {
-            constexpr const char* press = "Press A or START to start!";
-            constexpr const char* hint = "Touch Menu > Start Menu > Settings for options";
+            constexpr const char* press = "Tap the screen or START to start!";
+            constexpr const char* hint = "Phone Back > Start Menu > Settings for options";
             ImGui::SetCursorPos(ImVec2(std::max(0.0f, (viewport->Size.x - ImGui::CalcTextSize(press).x) * 0.5f),
                                        startY + 24.0f));
             ImGui::TextUnformatted(press);
@@ -1791,7 +1799,7 @@ void DrawTopBar() {
                      ImGuiWindowFlags_NoFocusOnAppearing)) {
         for (const char* line : {"Settings open - game controls disabled.",
 #if defined(__ANDROID__)
-                                 "Touch Menu > Start Menu for launcher settings."}) {
+                                 "Phone Back > Start Menu for launcher settings."}) {
 #else
                                  "Press F10 to return to the game."}) {
 #endif
@@ -2350,6 +2358,10 @@ void Draw() noexcept {
         DrawShaderCompilationStatus();
     }
     NetplayUi::Draw();
+#if defined(__ANDROID__)
+    BrawlAndroidSetStartupScreen(StartupScreenVisible());
+    BrawlMenuTouch::Update();
+#endif
     DrawFpsOverlay();
     PollMenuButton();
     DrawOptionsMenu();

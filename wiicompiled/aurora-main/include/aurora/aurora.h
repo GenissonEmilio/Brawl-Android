@@ -208,6 +208,13 @@ bool aurora_is_metalfx_spatial_supported();
 AuroraMetalFXStatus aurora_get_metalfx_status();
 
 AuroraBackend aurora_get_backend();
+typedef struct {
+  float left, top, width, height;
+  uint32_t surface_width, surface_height;
+} AuroraPresentViewport;
+// Last sealed presentation's actual pixel rectangle, including aspect/pixel corrections.
+// Thread-safe; false until a presentation rectangle has been produced.
+bool aurora_get_present_viewport(AuroraPresentViewport* viewport);
 const AuroraBackend* aurora_get_available_backends(size_t* count);
 
 #ifdef __cplusplus

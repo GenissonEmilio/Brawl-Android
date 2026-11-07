@@ -6,6 +6,7 @@ if not __debug__:
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -25,9 +26,10 @@ def main():
     p.add_argument('--disc', type=Path, required=True, help='Extracted DATA directory with sys/ and files/')
     p.add_argument('--decomp-config', type=Path, required=True, help='Public brawl decomp config/RSBE01_02')
     p.add_argument('--private-work', type=Path, required=True, help='Private generated directory outside this Git checkout')
-    p.add_argument('--dotnet', type=Path, help='.NET 8 SDK dotnet executable; required unless --prepare-only')
+    p.add_argument('--dotnet', type=Path, help='dotnet SDK capable of building net8.0; required unless --prepare-only')
     p.add_argument('--prepare-only', action='store_true')
-    p.add_argument('--threads', type=int, default=3)
+    p.add_argument('--threads', type=int, choices=(1, 2), default=2)
+    p.add_argument('--dotnet-roll-forward', choices=('Major', 'LatestMajor'), help='explicitly permit net8.0 CLI execution on a newer installed .NET runtime')
     args = p.parse_args()
     work = args.private_work.resolve()
     assert not work.is_relative_to(ROOT), 'Private source inputs must stay outside the Git checkout'
@@ -73,16 +75,21 @@ def main():
     if args.prepare_only:
         print('Private inputs prepared; tracked maps unchanged. Project: ' + str(project))
         return
-    assert args.dotnet and args.dotnet.is_file(), 'Pass --dotnet with a .NET 8 SDK executable'
+    assert args.dotnet and args.dotnet.is_file(), 'Pass --dotnet with a net8.0-capable SDK executable'
     cli = WC / 'translator/src/Translator.Cli/bin/Release/net8.0/Translator.Cli.dll'
     subprocess.run([str(args.dotnet.resolve()), 'build', str(WC / 'translator/src/Translator.Cli/Translator.Cli.csproj'),
-                    '-c', 'Release', '--nologo'], check=True)
+                    '-c', 'Release', '--nologo', '-maxcpucount:2', '-nodeReuse:false',
+                    '-p:UseSharedCompilation=false'], check=True)
+    environment = os.environ.copy()
+    if args.dotnet_roll_forward:
+        environment['DOTNET_ROLL_FORWARD'] = args.dotnet_roll_forward
     def translate(*parameters):
-        subprocess.run([str(args.dotnet.resolve()), str(cli), *parameters], cwd=WC, check=True)
+        subprocess.run([str(args.dotnet.resolve()), str(cli), *parameters], cwd=WC, env=environment, check=True)
     translate('translate-recursive', '0x8000403C', '--project', str(project), '--outdir', 'generated/functions',
               '--output-metadata', 'generated/base_translation_output.json', '--production-source-bundle',
               'generated/base_translation_sources.bin', '--no-function-files', '--no-state-free-abi',
-              '--data-in-text', 'projects/brawl/resident_data_ranges.txt', '--prune-stale', '--threads', str(args.threads))
+              '--bounded-ir', '--data-in-text', 'projects/brawl/resident_data_ranges.txt',
+              '--prune-stale', '--threads', str(args.threads))
     translate('generate-data-init', '--project', str(project))
     translate('emit-build-shards', '--project', str(project), '--base-metadata', 'generated/base_translation_output.json',
               '--base-functions-dir', 'generated/functions', '--native-source-dir', 'runtime/src', '--out',

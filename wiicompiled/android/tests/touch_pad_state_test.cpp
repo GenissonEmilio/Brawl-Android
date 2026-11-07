@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "../../runtime/src/android/android_touch_state.h"
+#include "../../runtime/src/android/android_touch_viewport.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -110,5 +111,30 @@ int main() {
     startup.Set(0,{0,0,0,0},false);
     startup.Set(0,{0,0,0,0},true);
     Check(!startup.ConsumeStartupPress(true),"disable and reenable cannot replay title input");
+    TouchPadState cpad;
+    cpad.Set(0,{80,0,100,0},true);
+    cpad.Set(0,{0,0,0,0},true);
+    Check(cpad.Sample(0,sample)&&sample.axes==std::array<int8_t,4>{0,0,100,0},"quick C-pad tap survives one PAD poll without queuing movement");
+    Check(cpad.Sample(0,sample)&&sample.axes==std::array<int8_t,4>{},"released C-pad returns neutral on the next poll");
+    cpad.Set(0,{0,0,0,-100},true);
+    cpad.Cancel();
+    Check(cpad.Sample(0,sample)&&sample.axes==std::array<int8_t,4>{},"cancel discards pending C-pad direction");
+    cpad.Set(0,{0,0,100,0},true);
+    cpad.Set(0,{0,0,0,100},true);
+    cpad.Set(0,{0,0,0,0},true);
+    Check(cpad.Sample(0,sample)&&sample.axes[2]==0&&sample.axes[3]==100,"latest deliberate C-pad direction wins before a poll");
+    BrawlAndroid::TouchViewport viewport{.1f,0,.8f,1};
+    float px=.05f,py=.5f;
+    Check(!viewport.Map(px,py),"letterbox tap is never forwarded to a menu item");
+    px=.5f;py=.5f;
+    Check(viewport.Map(px,py)&&std::abs(px-.5f)<.00001f&&std::abs(py-.5f)<.00001f,"actual viewport maps centre independent of bars");
+    px=.1f;py=0;
+    Check(viewport.Map(px,py)&&px==0&&py==0,"viewport top-left maps to game origin");
+    viewport={0,.2f,1,.6f};px=.25f;py=.5f;
+    Check(viewport.Map(px,py)&&std::abs(px-.25f)<.00001f&&std::abs(py-.5f)<.00001f,"cinematic top bars map using the presented rectangle");
+    viewport={0,0,1,1};px=.75f;py=.25f;
+    Check(viewport.Map(px,py)&&px==.75f&&py==.25f,"Fill passes through surface coordinates");
+    viewport={};px=.5f;py=.5f;
+    Check(!viewport.Map(px,py),"uninitialized viewport rejects menu taps");
     std::printf("PASS: production native touch state checks=%u\n",checks);
 }

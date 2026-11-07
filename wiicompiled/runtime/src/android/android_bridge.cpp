@@ -7,6 +7,8 @@
 #include "runtime_config.h"
 #include "settings_overlay.h"
 #include "android_touch_state.h"
+#include "android_touch_viewport.h"
+#include "brawl_menu_touch.h"
 
 #include "netplay/net_socket.h"
 #include "netplay_session.h"
@@ -17,6 +19,7 @@
 #include <jni.h>
 
 #include <chrono>
+#include <atomic>
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -29,6 +32,8 @@ namespace AndroidBridge {
 namespace {
 std::mutex touchMutex;
 BrawlAndroid::TouchPadState touchState;
+BrawlAndroid::TouchViewport touchViewport;
+std::atomic<bool> startupScreen{true};
 int8_t Axis(float value) {
     return std::isfinite(value) ? static_cast<int8_t>(std::lround(std::clamp(value, -1.0f, 1.0f) * 100.0f)) : 0;
 }
@@ -59,6 +64,26 @@ bool RestartGame() {
 
 extern "C" {
 
+// Staging rejects engines that still contain the inherited NSMBW menu bridge.
+unsigned BrawlAndroidDirectMenuVersion() { return 1; }
+
+// Published from the render/game thread: Java never reads the overlay's mutable UI state.
+void BrawlAndroidSetStartupScreen(bool visible)
+{
+    AndroidBridge::startupScreen.store(visible, std::memory_order_release);
+    AuroraPresentViewport viewport{};
+    BrawlAndroid::TouchViewport normalized;
+    if (aurora_get_present_viewport(&viewport)) {
+        normalized = {viewport.left/viewport.surface_width, viewport.top/viewport.surface_height,
+                      viewport.width/viewport.surface_width, viewport.height/viewport.surface_height};
+    }
+    std::lock_guard<std::mutex> lock(AndroidBridge::touchMutex);
+    if (!(normalized == AndroidBridge::touchViewport)) {
+        AndroidBridge::touchViewport = normalized;
+        BrawlMenuTouch::Cancel();
+    }
+}
+
 // Read by PADRead's local-source path, never by SDL's physical device enumeration.
 // Positive Y is up. The phone is exclusively virtual player 1; physical pads keep their ports.
 bool BrawlAndroidReadTouchPad(unsigned port, unsigned short* buttons, signed char* stickX,
@@ -68,7 +93,10 @@ bool BrawlAndroidReadTouchPad(unsigned port, unsigned short* buttons, signed cha
     std::lock_guard<std::mutex> lock(AndroidBridge::touchMutex);
     BrawlAndroid::TouchPadSample sample;
     if (!AndroidBridge::touchState.Sample(port, sample)) return false;
-    *buttons = sample.buttons;
+    int8_t pointerAxes[4]{};
+    if (BrawlMenuTouch::ReadPointerAxes(port, &pointerAxes[0], &pointerAxes[1], &pointerAxes[2], &pointerAxes[3]))
+        std::copy_n(pointerAxes, 4, sample.axes.begin());
+    *buttons = sample.buttons | BrawlMenuTouch::ConsumePadButtons(port);
     *stickX = sample.axes[0]; *stickY = sample.axes[1];
     *substickX = sample.axes[2]; *substickY = sample.axes[3];
     *triggerL = (*buttons & 0x40u) ? 255 : 0;
@@ -101,6 +129,7 @@ void BrawlAndroidCancelTouchPad()
 {
     std::lock_guard<std::mutex> lock(AndroidBridge::touchMutex);
     AndroidBridge::touchState.Cancel();
+    BrawlMenuTouch::Cancel();
 }
 
 JNIEXPORT void JNICALL Java_com_wither_nsmbw_GameActivity_nativeCancelTouchState(JNIEnv*, jclass)
@@ -158,10 +187,45 @@ JNIEXPORT void JNICALL Java_com_wither_nsmbw_GameActivity_nativePrepareToLeave(J
     NetplayStart::PrepareToLeave();
 }
 
-// GameActivity.nativeTap: a tap on the game's menus, as fractions of the screen (netplay_ui.h).
+// Menu coordinates are normalized over the actual SDL surface, including its viewport bars.
 JNIEXPORT void JNICALL Java_com_wither_nsmbw_GameActivity_nativeTap(JNIEnv*, jclass, jfloat x, jfloat y)
 {
-    NetplayUi::Tap(x, y);
+    if (!std::isfinite(x) || !std::isfinite(y) || x < 0 || x > 1 || y < 0 || y > 1) return;
+    if (AndroidBridge::startupScreen.load(std::memory_order_acquire)) {
+        std::lock_guard<std::mutex> lock(AndroidBridge::touchMutex);
+        AndroidBridge::touchState.Tap(0x100u);
+    } else {
+        {
+            std::lock_guard<std::mutex> lock(AndroidBridge::touchMutex);
+            if (!AndroidBridge::touchViewport.Map(x,y)) return;
+        }
+        BrawlMenuTouch::SubmitTap(x, y);
+    }
+}
+
+// Menu pointer streams are consumed only by the live photo camera. Other
+// menus keep their deliberate UP tap; gameplay uses the normal control View.
+JNIEXPORT void JNICALL Java_com_wither_nsmbw_GameActivity_nativePointer(
+    JNIEnv*, jclass, jint action, jint id, jfloat x, jfloat y)
+{
+    if (action < 0 || action > 3 || id < 0) return;
+    if (action == 3) {
+        BrawlMenuTouch::SubmitPointer(3, static_cast<unsigned>(id), 0, 0);
+        return;
+    }
+    bool mapped = false;
+    if (std::isfinite(x) && std::isfinite(y)) {
+        std::lock_guard<std::mutex> lock(AndroidBridge::touchMutex);
+        mapped = AndroidBridge::touchViewport.Map(x, y);
+    }
+    // Lifting outside the image still releases that finger. Leaving the
+    // viewport during a drag cancels it rather than retaining camera input.
+    if (!mapped && action != 1) {
+        if (action == 2) BrawlMenuTouch::SubmitPointer(3, static_cast<unsigned>(id), 0, 0);
+        return;
+    }
+    BrawlMenuTouch::SubmitPointer(static_cast<unsigned>(action), static_cast<unsigned>(id),
+                                mapped ? x : 0, mapped ? y : 0);
 }
 
 // GameActivity.nativeTakeSettings: {render scale, show FPS 1/0, aspect, spinning coins 1/0, frame graph 1/0} when the game's settings
@@ -186,7 +250,13 @@ JNIEXPORT jfloatArray JNICALL Java_com_wither_nsmbw_GameActivity_nativeTakeSetti
 // GameActivity.nativeTapScreen: whether a menu that taps drive is up (the app hides its remote).
 JNIEXPORT jboolean JNICALL Java_com_wither_nsmbw_GameActivity_nativeTapScreen(JNIEnv*, jclass)
 {
-    return NetplayUi::TapScreenUp() ? JNI_TRUE : JNI_FALSE;
+    bool viewportReady;
+    {
+        std::lock_guard<std::mutex> lock(AndroidBridge::touchMutex);
+        viewportReady = AndroidBridge::touchViewport.width > 0 && AndroidBridge::touchViewport.height > 0;
+    }
+    return AndroidBridge::startupScreen.load(std::memory_order_acquire) || (viewportReady && BrawlMenuTouch::IsDirectTouchScreen())
+        ? JNI_TRUE : JNI_FALSE;
 }
 
 } // extern "C"

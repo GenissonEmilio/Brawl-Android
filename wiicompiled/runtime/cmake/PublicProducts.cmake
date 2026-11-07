@@ -257,7 +257,14 @@ function(mkw_configure_product target)
         # exported SDL_main (runtime/src/main.cpp). 16 KiB pages keep it loadable on Android 15+
         # devices that use them.
         target_link_libraries(${target} PRIVATE android log ${CMAKE_DL_LIBS})
-        target_link_options(${target} PRIVATE "LINKER:-z,max-page-size=16384" "LINKER:--no-undefined")
+        # lld otherwise derives its worker count from every host CPU, outside
+        # Ninja's two-job limit. Keep the large translated engine bounded too.
+        target_link_options(${target} PRIVATE "LINKER:-z,max-page-size=16384" "LINKER:--no-undefined" "LINKER:--threads=2")
+        # The NDK's object files retain DWARF even in Release. It grows this
+        # translated engine's link output by several GiB before APK staging
+        # strips it again. Skip that intermediate data at the release link;
+        # Debug builds keep it, and normal symbol names remain available.
+        target_link_options(${target} PRIVATE "$<$<CONFIG:Release>:LINKER:--strip-debug>")
         set_target_properties(${target} PROPERTIES OUTPUT_NAME main)
     endif()
     if(MKW_PLATFORM_WINDOWS)
@@ -283,8 +290,6 @@ function(mkw_configure_product target)
     if(NOT EXISTS "${MKW_WII_BOOTSTRAP_SOURCE_DIR}/shared2/wc24")
         message(FATAL_ERROR "Missing Wii first-run bootstrap payload: ${MKW_WII_BOOTSTRAP_SOURCE_DIR}")
     endif()
-    add_custom_command(TARGET ${target} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${MKW_WII_BOOTSTRAP_SOURCE_DIR}" "$<TARGET_FILE_DIR:${target}>/wii_bootstrap")
 
     set(MKW_DSP_COEFFICIENT_ROM "${MKW_RUNTIME_SOURCE_DIR}/assets/dsp/dsp_coef.bin")
     if(NOT EXISTS "${MKW_DSP_COEFFICIENT_ROM}")
@@ -295,8 +300,6 @@ function(mkw_configure_product target)
        "d7741279c2e8ec5c5fb318f8fbdd6de6bf583520d288e836a5383233a4238179")
         message(FATAL_ERROR "Wii DSP coefficient ROM hash mismatch: ${MKW_DSP_COEFFICIENT_ROM_SHA256}")
     endif()
-    add_custom_command(TARGET ${target} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${MKW_DSP_COEFFICIENT_ROM}" "$<TARGET_FILE_DIR:${target}>/dsp_coef.bin")
 
     # Aurora imports this portable recipe database into each user's writable
     # pipeline cache. Keep the upstream filename so its default resourcesPath
@@ -306,9 +309,6 @@ function(mkw_configure_product target)
     if(NOT EXISTS "${MKW_INITIAL_PIPELINE_CACHE}")
         message(FATAL_ERROR "Missing transferable Aurora pipeline cache: ${MKW_INITIAL_PIPELINE_CACHE}")
     endif()
-    add_custom_command(TARGET ${target} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${MKW_INITIAL_PIPELINE_CACHE}"
-        "$<TARGET_FILE_DIR:${target}>/initial_pipeline_cache.db")
 
     # Non-Windows TLS (runtime/src/hle/net/network_ssl.cpp's mbed TLS path) needs a trusted root
     # CA bundle to verify server certificates against - Windows gets this for free from the OS via
@@ -321,9 +321,23 @@ function(mkw_configure_product target)
         if(NOT EXISTS "${MKW_CA_CERTIFICATE_BUNDLE}")
             message(FATAL_ERROR "Missing TLS root CA bundle: ${MKW_CA_CERTIFICATE_BUNDLE}")
         endif()
-        add_custom_command(TARGET ${target} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${MKW_CA_CERTIFICATE_BUNDLE}" "$<TARGET_FILE_DIR:${target}>/cacert.pem")
     endif()
+    # Resources must refresh even when no native object needs rebuilding.
+    # Products share an output directory and one resource target to avoid races.
+    # Synchronize the bootstrap tree from scratch so removed source files vanish.
+    if(NOT TARGET mkw_runtime_resources)
+        set(resource_commands
+            COMMAND "${CMAKE_COMMAND}" -E rm -rf "$<TARGET_FILE_DIR:${target}>/wii_bootstrap"
+            COMMAND "${CMAKE_COMMAND}" -E copy_directory "${MKW_WII_BOOTSTRAP_SOURCE_DIR}" "$<TARGET_FILE_DIR:${target}>/wii_bootstrap"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${MKW_DSP_COEFFICIENT_ROM}" "$<TARGET_FILE_DIR:${target}>/dsp_coef.bin"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${MKW_INITIAL_PIPELINE_CACHE}" "$<TARGET_FILE_DIR:${target}>/initial_pipeline_cache.db")
+        if(NOT MKW_PLATFORM_WINDOWS)
+            list(APPEND resource_commands COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${MKW_CA_CERTIFICATE_BUNDLE}" "$<TARGET_FILE_DIR:${target}>/cacert.pem")
+        endif()
+        add_custom_target(mkw_runtime_resources ${resource_commands} VERBATIM)
+    endif()
+    add_dependencies(${target} mkw_runtime_resources)
 endfunction()
 
 # MKW_ENGINE_MODULE (Windows): the engine is a DLL named MKW_ENGINE_MODULE_NAME exporting SDL_main, like the Android

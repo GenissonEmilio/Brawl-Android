@@ -51,6 +51,7 @@ final class AppFiles {
         if(problem!=null) throw new IOException(problem);
         GameInstallTransaction.verifySha256(new File(root,"sys/main.dol"),
                 "179574a14c484279efef84db58e55fe31bc2e3cf6c99efc0d20e7b322ec088be");
+        BrawlInstallValidator.validate(root);
     }
 
     /** An extracted disc: sys/main.dol and the files/ tree. */
@@ -93,7 +94,7 @@ final class AppFiles {
             return "That is " + id.trim() + ", not Super Smash Bros. Brawl for the USA (RSBE01). "
                     + "This port runs only the USA disc, revision 1.";
         }
-        if (revision != 1) {
+        if (header[6] != 0 || revision != 1) {
             return "That is Super Smash Bros. Brawl revision " + revision + ". This port runs only "
                     + "revision 1 (Dolphin shows it under Properties > Info).";
         }

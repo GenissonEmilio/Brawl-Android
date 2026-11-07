@@ -2,19 +2,25 @@ plugins {
     id 'com.android.application'
 }
 
+def brawlAppId = providers.gradleProperty('brawlApplicationId').getOrElse('com.genisson.brawl.android')
+def frontendOnly = providers.gradleProperty('brawlFrontendOnly').getOrElse('false').toBoolean()
+if (frontendOnly && brawlAppId != 'com.genisson.brawl.android.validation') {
+    throw new GradleException('View-only instrumentation requires the separate .validation application ID')
+}
+
 android {
     namespace 'com.wither.nsmbw'
     compileSdk 36
 
     defaultConfig {
         // A separate QA ID allows View instrumentation before the native/game build is staged.
-        applicationId providers.gradleProperty('brawlApplicationId').getOrElse('com.genisson.brawl.android')
+        applicationId brawlAppId
         // Guest RAM uses memfd_create, which bionic has from Android 11 (API 30).
         minSdk 31
         targetSdk 36
         testInstrumentationRunner 'com.wither.nsmbw.TouchControlsInstrumentation'
-        versionCode 1
-        versionName '0.1.0-dev'
+        versionCode 2
+        versionName '0.1.1-dev'
         ndk {
             abiFilters 'arm64-v8a'
         }
@@ -41,8 +47,8 @@ android {
     sourceSets {
         main {
             // tools/stage-android.py stages the native build and runtime assets locally.
-            jniLibs.srcDirs = ['../native/jniLibs']
-            assets.srcDirs = ['../native/assets']
+            jniLibs.srcDirs = frontendOnly ? [] : ['../native/jniLibs']
+            assets.srcDirs = frontendOnly ? [] : ['../native/assets']
         }
     }
 

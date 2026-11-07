@@ -1,9 +1,9 @@
 package com.wither.nsmbw;
 
 import android.content.Context;
-import android.content.SharedPreferences;
 
-/** Player settings, kept in one SharedPreferences file shared by the launcher and the game. */
+
+/** Player settings, read under a file lock by both launcher and game processes. */
 final class AppSettings {
     static final int ASPECT_4_3 = 0;
     static final int ASPECT_16_9 = 1;
@@ -18,51 +18,66 @@ final class AppSettings {
     static final float[] RESOLUTION_SCALES = {0f, 0.5f, 0.75f, 1f, 1.5f, 2f, 3f, 4f};
 
     private static final String FILE = "settings";
-    private final SharedPreferences prefs;
+    private static final java.util.Map<String,SharedSettingsFile.SafeAccess> STORES=new java.util.HashMap<>();
+    private final SharedSettingsFile.SafeAccess prefs;
 
     AppSettings(Context context) {
-        // Both processes (launcher and :game) read it. Writes use commit(): the game process is
-        // ended right after its menu closes, which would drop a pending apply().
-        prefs = context.getSharedPreferences(FILE, Context.MODE_PRIVATE);
+        // Share failure notifications and last confirmed values within each process; the store
+        // still reloads under its inter-process lock on every successful read/write.
+        Context application=context.getApplicationContext();
+        java.io.File file=new java.io.File(application.getFilesDir(),"settings-v2.properties");
+        synchronized(STORES) {
+            prefs=STORES.computeIfAbsent(file.getAbsolutePath(),path -> new SharedSettingsFile.SafeAccess(file,
+                    application.getSharedPreferences(FILE,Context.MODE_PRIVATE).getAll(),failure -> {
+                        android.util.Log.w("BrawlAndroid","Could not access player settings; previous settings retained",failure);
+                        new android.os.Handler(android.os.Looper.getMainLooper()).post(() ->
+                            android.widget.Toast.makeText(application,
+                                "Could not access player settings. Keeping the last saved settings.",
+                                android.widget.Toast.LENGTH_LONG).show());
+                    }));
+        }
     }
+    private int integer(String key, int fallback) { return Integer.parseInt(prefs.get(key, String.valueOf(fallback))); }
+    private float decimal(String key, float fallback) { return Float.parseFloat(prefs.get(key, String.valueOf(fallback))); }
+    private boolean flag(String key, boolean fallback) { return Boolean.parseBoolean(prefs.get(key, String.valueOf(fallback))); }
 
-    int aspectMode() { return prefs.getInt("aspect_mode", ASPECT_16_9); }
-    void setAspectMode(int mode) { prefs.edit().putInt("aspect_mode", mode).commit(); }
+    int aspectMode() { return integer("aspect_mode", ASPECT_16_9); }
+    void setAspectMode(int mode) { prefs.put("aspect_mode", mode); }
 
-    float resolutionScale() { return prefs.getFloat("resolution_scale", 1f); }
-    void setResolutionScale(float scale) { prefs.edit().putFloat("resolution_scale", scale).commit(); }
+    float resolutionScale() { return decimal("resolution_scale", 1f); }
+    void setResolutionScale(float scale) { prefs.put("resolution_scale", scale); }
 
-    int gpuCompat() { return prefs.getInt("gpu_compat", GPU_COMPAT_AUTO); }
-    void setGpuCompat(int mode) { prefs.edit().putInt("gpu_compat", mode).commit(); }
+    int gpuCompat() { return integer("gpu_compat", GPU_COMPAT_AUTO); }
+    void setGpuCompat(int mode) { prefs.put("gpu_compat", mode); }
 
-    boolean showFps() { return prefs.getBoolean("show_fps", false); }
-    void setShowFps(boolean show) { prefs.edit().putBoolean("show_fps", show).commit(); }
-    boolean vsync() { return prefs.getBoolean("vsync", true); }
-    void setVsync(boolean enabled) { prefs.edit().putBoolean("vsync", enabled).commit(); }
-    boolean spinningCoins() { return prefs.getBoolean("spinning_coins", true); }
-    void setSpinningCoins(boolean on) { prefs.edit().putBoolean("spinning_coins", on).commit(); }
+    boolean showFps() { return flag("show_fps", false); }
+    void setShowFps(boolean show) { prefs.put("show_fps", show); }
+    boolean vsync() { return flag("vsync", true); }
+    void setVsync(boolean enabled) { prefs.put("vsync", enabled); }
+    boolean spinningCoins() { return flag("spinning_coins", true); }
+    void setSpinningCoins(boolean on) { prefs.put("spinning_coins", on); }
 
-    boolean frameGraph() { return prefs.getBoolean("frame_graph", false); }
-    void setFrameGraph(boolean on) { prefs.edit().putBoolean("frame_graph", on).commit(); }
+    boolean frameGraph() { return flag("frame_graph", false); }
+    void setFrameGraph(boolean on) { prefs.put("frame_graph", on); }
 
-    boolean touchControls() { return prefs.getBoolean("touch_controls", true); }
-    void setTouchControls(boolean on) { prefs.edit().putBoolean("touch_controls", on).commit(); }
+    boolean touchControls() { return flag("touch_controls", true); }
+    void setTouchControls(boolean on) { prefs.put("touch_controls", on); }
 
-    float touchOpacity() { return prefs.getFloat("touch_opacity", 0.45f); }
-    void setTouchOpacity(float opacity) { prefs.edit().putFloat("touch_opacity", opacity).commit(); }
+    float touchOpacity() { return decimal("touch_opacity", 0.45f); }
+    void setTouchOpacity(float opacity) { prefs.put("touch_opacity", opacity); }
 
-    boolean motionTilt() { return prefs.getBoolean("motion_tilt", false); }
-    void setMotionTilt(boolean on) { prefs.edit().putBoolean("motion_tilt", on).commit(); }
+    boolean motionTilt() { return flag("motion_tilt", false); }
+    void setMotionTilt(boolean on) { prefs.put("motion_tilt", on); }
 
-    boolean motionShake() { return prefs.getBoolean("motion_shake", false); }
-    void setMotionShake(boolean on) { prefs.edit().putBoolean("motion_shake", on).commit(); }
+    boolean motionShake() { return flag("motion_shake", false); }
+    void setMotionShake(boolean on) { prefs.put("motion_shake", on); }
 
-    boolean haptics() { return prefs.getBoolean("haptics", true); }
-    void setHaptics(boolean on) { prefs.edit().putBoolean("haptics", on).commit(); }
+    boolean haptics() { return flag("haptics", true); }
+    void setHaptics(boolean on) { prefs.put("haptics", on); }
 
     /** Open the game straight away when the app starts; the in-game menu leads back here. */
-    boolean skipStartMenu() { return prefs.getBoolean("skip_start_menu", false); }
-    void setSkipStartMenu(boolean on) { prefs.edit().putBoolean("skip_start_menu", on).commit(); }
+    boolean skipStartMenu() { return flag("skip_start_menu", false); }
+    void setSkipStartMenu(boolean on) { prefs.put("skip_start_menu", on); }
 
     /** "2× (960p)": the scale and the number of lines it renders, as the menu shows it. */
     static String resolutionLabel(float scale) {

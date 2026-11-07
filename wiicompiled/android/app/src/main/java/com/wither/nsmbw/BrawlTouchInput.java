@@ -16,7 +16,11 @@ final class BrawlTouchInput {
     static final class Control {
         final int action; final String label; float x,y,r;
         Control(int action,String label) { this.action=action; this.label=label; }
-        boolean hit(float px,float py) { return Math.hypot(px-x,py-y)<=r*1.1f; }
+        boolean hit(float px,float py) {
+            float dx=Math.abs(px-x),dy=Math.abs(py-y);
+            return action==CSTICK ? Math.max(dx,dy)<=r*1.1f&&Math.min(dx,dy)<=r*.48f
+                    : Math.hypot(dx,dy)<=r*1.1f;
+        }
     }
     private static final class Finger {
         final int action; float x,y;
@@ -49,9 +53,13 @@ final class BrawlTouchInput {
     Control control(int action) { for(Control c:controls) if(c.action==action) return c; throw new IllegalArgumentException(); }
     private void place(int action,float x,float y,float r) { Control c=control(action);c.x=x;c.y=y;c.r=r; }
     int down(int id,float x,float y,boolean visible) {
+        return down(id,x,y,visible,false);
+    }
+    int downMenu(int id,float x,float y) {return down(id,x,y,false,true);}
+    private int down(int id,float x,float y,boolean visible,boolean menuOnly) {
         if(fingers.containsKey(id)) return 0;
         for(Control c:controls) {
-            if((visible||c.action==MENU)&&c.hit(x,y)) {
+            if((menuOnly?c.action==START:(visible||c.action==MENU))&&c.hit(x,y)) {
                 // A stick belongs to its first finger until it lifts. Crossing never steals roles.
                 if(c.action<0&&c.action!=MENU) for(Finger f:fingers.values()) if(f.action==c.action) return 0;
                 fingers.put(id,new Finger(c.action,x,y)); return c.action;
@@ -70,7 +78,7 @@ final class BrawlTouchInput {
                 float dx=f.x-c.x,dy=c.y-f.y;
                 if(Math.abs(dx)<COORDINATE_EPSILON) dx=0;
                 if(Math.abs(dy)<COORDINATE_EPSILON) dy=0;
-                float[] a=analog(dx/c.r,dy/c.r);
+                float[] a=f.action==CSTICK ? directionalPad(dx/c.r,dy/c.r) : analog(dx/c.r,dy/c.r);
                 if(f.action==MOVE) {x=a[0];y=a[1];} else {cx=a[0];cy=a[1];}
             } else if(f.action>0&&c.hit(f.x,f.y)) b|=f.action;
         }
@@ -81,5 +89,16 @@ final class BrawlTouchInput {
         if(!Float.isFinite(length)||length<=DEAD_ZONE) return new float[]{0,0};
         float magnitude=Math.min(1,(length-DEAD_ZONE)/(1-DEAD_ZONE));
         return new float[]{x/length*magnitude,y/length*magnitude};
+    }
+    /** Eight discrete directions driving the original C-stick attacks, with a neutral centre. */
+    static float[] directionalPad(float x,float y) {
+        float length=(float)Math.hypot(x,y);
+        if(!Float.isFinite(length)||length<.24f) return new float[]{0,0};
+        // A 22.5 degree sector around each cardinal direction; corners allow diagonals.
+        float ax=Math.abs(x),ay=Math.abs(y),slope=.41421356f;
+        if(ay<ax*slope) return new float[]{Math.signum(x),0};
+        if(ax<ay*slope) return new float[]{0,Math.signum(y)};
+        float diagonal=(float)Math.sqrt(.5);
+        return new float[]{Math.signum(x)*diagonal,Math.signum(y)*diagonal};
     }
 }

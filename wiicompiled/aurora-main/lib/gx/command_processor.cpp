@@ -485,6 +485,17 @@ std::atomic<float> g_widePerspectiveAspect{0.0f};
 static float g_spmProjWiden = 1.f;  // the horizontal factor the current projection was widened by
 float g_spmScreenWiden = 1.f;        // the same for the last screen-sized 16:9 view (texture copies use it)
 
+static float projection_horizontal_scale(float m00, float m11, float viewportWidth, float viewportHeight,
+                                        bool* applied = nullptr) {
+  const float wide = g_widePerspectiveAspect.load(std::memory_order_relaxed);
+  const float aspect = m00 != 0.f ? m11 / m00 : 0.f;
+  const bool eligible = wide > 0.f && m00 != 0.f && m11 != 0.f &&
+                        aspect > 1.62f && aspect < 1.88f &&
+                        viewportWidth >= 600.f && viewportHeight >= 440.f;
+  if (applied != nullptr) *applied = eligible;
+  return eligible ? aspect / wide : 1.f;
+}
+
 static void apply_xf_projection() {
   const auto& raw = g_gxState.xfProjection;
   auto& proj = g_gxState.proj;
@@ -494,21 +505,15 @@ static void apply_xf_projection() {
   // vertical view, more to the sides (Hor+), around the same centre. Cameras already set up wider
   // are left alone. That covers the perspective ones (world map, title) and the orthographic one
   // the levels are drawn with; small orthographic views (render-to-texture work) are skipped.
-  float widen = 1.0f;
-  const float wide = g_widePerspectiveAspect.load(std::memory_order_relaxed);
-  if (wide > 0.0f && raw[0] != 0.0f && raw[2] != 0.0f) {
-    const float aspect = raw[2] / raw[0];
-    // Screen-sized = drawn into (about) the whole EFB; smaller viewports are render-to-texture work. The ortho
-    // height can't tell: SPM zooms its 2D camera in by shrinking it, which then went unwidened and stretched.
-    const auto& vp = g_gxState.xfViewport;
-    const bool screenSized = vp[0] * 2.0f >= 600.0f && -vp[1] * 2.0f >= 440.0f;
-    // Brawl: the character and stage selects use a 1.65 camera (their layouts for 16:9), so the range starts there;
-    // below it they stretched across an ultrawide screen.
-    if (aspect > 1.62f && aspect < 1.88f && screenSized) {
-      widen = aspect / wide;
-      g_spmScreenWiden = widen;
-    }
-  } else if (wide <= 0.0f) {
+  // Share the exact eligibility/scale with the touch adapter, including small
+  // render-to-texture views and Brawl's 1.65 selection cameras.
+  const auto& viewport = g_gxState.xfViewport;
+  bool widened = false;
+  const float widen = projection_horizontal_scale(raw[0], raw[2], viewport[0] * 2.f,
+                                                   -viewport[1] * 2.f, &widened);
+  if (widened) {
+    g_spmScreenWiden = widen;
+  } else if (g_widePerspectiveAspect.load(std::memory_order_relaxed) <= 0.0f) {
     g_spmScreenWiden = 1.0f;
   }
   g_spmProjWiden = widen;
@@ -3352,6 +3357,9 @@ extern "C" void AuroraTakeGxStats(uint64_t* processNanos, uint64_t* lockNanos, u
 
 extern "C" void AuroraSetWidePerspectiveAspect(float aspect) {
   aurora::gx::fifo::g_widePerspectiveAspect.store(aspect, std::memory_order_relaxed);
+}
+extern "C" float AuroraProjectionHorizontalScale(float m00, float m11, float viewportWidth, float viewportHeight) {
+  return aurora::gx::fifo::projection_horizontal_scale(m00, m11, viewportWidth, viewportHeight);
 }
 
 // Decoded vertex descriptor/format state, so the runtime can mirror changes a host display list made.

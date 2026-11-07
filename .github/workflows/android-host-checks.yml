@@ -1,0 +1,58 @@
+name: Android host checks
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  private-data-free:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Bounded canonical IR regressions (8 cases)
+        env:
+          DOTNET_PROCESSOR_COUNT: '2'
+          DOTNET_CLI_USE_MSBUILD_SERVER: '0'
+        run: >-
+          dotnet test wiicompiled/translator/tests/Translator.Tests/Translator.Tests.csproj
+          --configuration Release --nologo
+          --filter 'FullyQualifiedName~CanonicalIrDictionaryTests|FullyQualifiedName~CanonicalIrStoreTests|FullyQualifiedName~GuestAbiInterproceduralAnalyzerTests'
+          -maxcpucount:2 -nodeReuse:false -p:UseSharedCompilation=false
+          -- RunConfiguration.MaxCpuCount=2
+      - name: Python tooling regressions
+        run: python -B -m unittest discover -s tools/tests -v
+      - name: Java host regressions
+        shell: bash
+        run: |
+          classes=$(mktemp -d "$RUNNER_TEMP/brawl-java.XXXXXX")
+          trap 'rm -rf "$classes"' EXIT
+          source=wiicompiled/android/app/src/main/java/com/wither/nsmbw
+          tests=wiicompiled/android/tests
+          javac --release 17 -encoding UTF-8 -d "$classes" \
+            "$source/BrawlTouchInput.java" "$source/MenuTouchInput.java" "$source/GameInstallTransaction.java" \
+            "$source/BrawlInstallValidator.java" "$source/SharedSettingsFile.java" "$source/ImportLifecycle.java" \
+            wiicompiled/android/app/src/androidTest/java/com/wither/nsmbw/LiveWindowFocus.java \
+            "$tests/TouchInputHostTest.java" "$tests/GameInstallTransactionHostTest.java" "$tests/LiveWindowFocusHostTest.java" \
+            "$tests/BrawlInstallValidatorHostTest.java" "$tests/SharedSettingsFileHostTest.java" "$tests/ImportLifecycleHostTest.java" "$tests/MenuTouchInputHostTest.java"
+          for check in TouchInputHostTest MenuTouchInputHostTest GameInstallTransactionHostTest LiveWindowFocusHostTest BrawlInstallValidatorHostTest SharedSettingsFileHostTest ImportLifecycleHostTest; do
+            java -Xmx128m -cp "$classes" "com.wither.nsmbw.$check"
+          done
+      - name: Native touch and menu geometry regressions
+        shell: bash
+        run: |
+          binaries=$(mktemp -d "$RUNNER_TEMP/brawl-native.XXXXXX")
+          trap 'rm -rf "$binaries"' EXIT
+          for source in touch_pad_state_test BrawlMenuTouchHostTest; do
+            g++ -std=c++17 -O2 "wiicompiled/android/tests/$source.cpp" -o "$binaries/$source"
+            "$binaries/$source"
+          done

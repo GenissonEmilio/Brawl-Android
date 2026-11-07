@@ -4,6 +4,9 @@ package com.wither.nsmbw;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.RandomAccessFile;
+import java.nio.channels.FileLock;
+import java.nio.channels.OverlappingFileLockException;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -29,11 +32,29 @@ final class GameInstallTransaction {
     }
     boolean needsRecovery() {return backup.exists();}
 
+    /** The lease spans copying, validation, publication and failure cleanup. Never wait on the UI. */
+    ImportLease beginImport() throws IOException {
+        RandomAccessFile handle = new RandomAccessFile(new File(base,"game.import.lock"),"rw");
+        try {
+            FileLock lock;
+            try { lock=handle.getChannel().tryLock(); }
+            catch(OverlappingFileLockException busy) { lock=null; }
+            if(lock==null) throw new IOException("another game import or recovery is already running");
+            return new ImportLease(handle,lock);
+        } catch(IOException | RuntimeException failure) {handle.close();throw failure;}
+    }
+    static final class ImportLease implements AutoCloseable {
+        private final RandomAccessFile handle; private final FileLock lock;
+        ImportLease(RandomAccessFile handle,FileLock lock) {this.handle=handle;this.lock=lock;}
+        @Override public void close() throws IOException {try {lock.release();} finally {handle.close();}}
+    }
     void recoverAtStartup(Validator validator) throws IOException {
-        synchronized(PROCESS_LOCK) {
-            if(!needsRecovery()) return;
-            recoverLocked(validator);
-            deleteOwned(staging);
+        try(ImportLease lease=beginImport()) {
+            synchronized(PROCESS_LOCK) {
+                recoverLocked(validator);
+                // Also reclaim a copy interrupted before the first game -> backup rename.
+                deleteOwned(staging);
+            }
         }
     }
 
